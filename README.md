@@ -229,7 +229,9 @@ Design constraints held throughout:
 * Read-only. The bot never asks for a seed phrase, private key or signature,
   and never trades.
 
-Deeper reading: [`docs/SCORING.md`](docs/SCORING.md) for how the engine
+Deeper reading: [`docs/GUIDE_FR.md`](docs/GUIDE_FR.md) — guide complet en français
+(installation, utilisation, lecture des rapports).
+[`docs/SCORING.md`](docs/SCORING.md) for how the engine
 decides, [`docs/API_MATRIX.md`](docs/API_MATRIX.md) for data sources, costs and
 fallbacks.
 
