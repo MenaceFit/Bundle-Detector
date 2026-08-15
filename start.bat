@@ -78,12 +78,23 @@ if "%COMMAND%"=="api" (
 if "%COMMAND%"=="bot" (
     REM Diagnostic d'abord : un message clair vaut mieux qu'une traceback.
     "%VENV_PY%" -m app.main doctor
-    if %errorlevel% neq 0 exit /b 1
+    if errorlevel 1 goto :halt
     echo -^> Demarrage du bot... ^(Ctrl+C pour arreter^)
     "%VENV_PY%" -m app.main bot
-    exit /b %errorlevel%
+    goto :halt
 )
 
 echo Commande inconnue : %COMMAND%
 echo Usage : start.bat [bot^|doctor^|api^|scan ^<MINT^>^|demo]
 exit /b 1
+
+REM Lance en double-clic, la fenetre se refermerait instantanement et le
+REM message d'erreur serait illisible. On garde la console ouverte.
+:halt
+echo.
+echo ────────────────────────────────────────────────────────────────
+echo Le programme s'est arrete. Lisez le message ci-dessus.
+echo Diagnostic :  start.bat doctor
+echo.
+pause
+exit /b %errorlevel%

@@ -142,6 +142,57 @@ Elle vérifie tout — Python, dépendances, `.env`, format du token, connexion
 réelle à Discord et au RPC, base de données, cache — et pour chaque problème,
 affiche l'action exacte à faire.
 
+### « Le bot démarre puis se ferme »
+
+Le diagnostic est vert, les commandes apparaissent dans Discord, mais le
+programme s'arrête et Discord répond **« L'application ne répond pas »**.
+
+Cela veut dire que le processus n'est plus là pour répondre. Pour voir
+pourquoi :
+
+```bash
+# Linux / macOS
+LOG_LEVEL=DEBUG ./start.sh
+
+# Windows (PowerShell)
+$env:LOG_LEVEL="DEBUG"; .\start.bat
+```
+
+Le bot affiche maintenant explicitement son état :
+
+```
+✅ Bot en ligne : Bundle Detector  (1 serveur(s))
+   Tapez /scan dans Discord. Ctrl+C pour arrêter.
+```
+
+**Si vous ne voyez jamais cette ligne**, la connexion n'a pas abouti — le
+message d'erreur juste au-dessus vous dira laquelle des trois causes
+habituelles s'applique (token, intent, réseau).
+
+**Si vous la voyez puis que le bot s'arrête**, un message explique la cause à
+la fermeture (token réinitialisé pendant l'exécution, bot expulsé du serveur,
+coupure réseau).
+
+> **Windows** : lancez `start.bat` depuis une invite de commandes plutôt qu'en
+> double-cliquant. En double-clic, la fenêtre se refermait avant que vous ne
+> puissiez lire l'erreur — le script se met désormais en pause, mais une
+> console ouverte reste plus confortable.
+
+### « La commande met longtemps puis ne répond pas »
+
+Un scan qui dépasse `SCAN_TIMEOUT_SECONDS` (180 s par défaut) s'arrête
+maintenant avec un message clair au lieu de laisser Discord attendre.
+
+C'est presque toujours le RPC public : il est rate-limité, donc chaque requête
+est retentée plusieurs fois et un scan complet peut dépasser les trois minutes.
+Deux solutions :
+
+- utilisez `/quickscan` au lieu de `/scan` ;
+- ou mettez un endpoint payant dans `RPC_URL` (c'est la vraie solution).
+
+C'est exactement ce que signale l'avertissement `⚠️ URL RPC — RPC public` du
+diagnostic.
+
 ### Les cas les plus fréquents
 
 | Ce que vous voyez | Ce que ça veut dire | Quoi faire |

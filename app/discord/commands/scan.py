@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import discord
@@ -23,6 +24,10 @@ from app.utils.timefmt import human_duration
 log = get_logger("DISCORD")
 
 
+class ScanTimeout(RuntimeError):
+    """Un scan a dépassé `SCAN_TIMEOUT_SECONDS`."""
+
+
 async def _execute(
     bot: commands.Bot, mint: str, depth: ScanDepth, *, requested_by: str | None, progress=None
 ) -> tuple[ScanReport, ScanContext]:
@@ -32,10 +37,25 @@ async def _execute(
     job_id: int | None = None
     async with session_scope() as session:
         job_id = await repository.create_job(session, mint, depth.value, requested_by)
+    timeout = float(bot.settings.scan_timeout_seconds)
     try:
-        result = await bot.orchestrator.scan(
-            mint, depth=depth, progress=progress, requested_by=requested_by
+        # Sans plafond, un endpoint RPC lent ou rate-limité laisse l'interaction
+        # Discord sans réponse et l'utilisateur ne voit que « L'application ne
+        # répond pas ». Un échec explicite vaut mieux qu'une attente infinie.
+        result = await asyncio.wait_for(
+            bot.orchestrator.scan(mint, depth=depth, progress=progress, requested_by=requested_by),
+            timeout=timeout,
         )
+    except TimeoutError as exc:
+        async with session_scope() as session:
+            await repository.update_job(
+                session, job_id, status="failed", error="timeout", duration=time.monotonic() - started
+            )
+        raise ScanTimeout(
+            f"le scan a dépassé {timeout:.0f} s. Votre endpoint RPC est probablement trop lent "
+            "ou rate-limité — essayez `/quickscan`, ou passez à un endpoint payant "
+            "(voir RPC_URL dans .env)."
+        ) from exc
     except Exception as exc:
         async with session_scope() as session:
             await repository.update_job(
@@ -103,9 +123,12 @@ class ScanCommands(commands.Cog):
             await reporter.fail("Not a Pump.fun token.")
             await interaction.followup.send(embed=embeds.not_pumpfun_embed(mint, exc.reason))
             return
+        except ScanTimeout as exc:
+            await reporter.fail(str(exc))
+            return
         except Exception as exc:  # noqa: BLE001
             log.exception("scan failed", mint=mint, error=str(exc))
-            await reporter.fail(str(exc)[:400])
+            await reporter.fail(f"{type(exc).__name__}: {str(exc)[:350]}")
             return
         finally:
             self.bot.release(mint)
