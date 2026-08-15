@@ -8,6 +8,7 @@ l'utilisateur ne voit qu'une traceback.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -123,6 +124,26 @@ class TestDoctor:
         assert check.status == FAIL
         assert check.blocking
 
+    def test_disk_space_check_reports_free_space(self):
+        from app.doctor import FAIL, check_disk_space
+
+        check = check_disk_space()
+        assert check.status != FAIL or "insuffisant" in check.detail
+
+    def test_missing_pip_is_reported_with_the_repair_command(self):
+        """Panne réelle sous Windows : venv sans pip, réutilisé indéfiniment."""
+        from app.doctor import WARN, check_pip
+
+        with patch("importlib.util.find_spec", return_value=None):
+            check = check_pip()
+        assert check.status == WARN
+        assert check.fix and ("ensurepip" in check.fix or "installation" in check.fix)
+
+    def test_pip_present_passes(self):
+        from app.doctor import OK, check_pip
+
+        assert check_pip().status == OK
+
     def test_report_renders_every_check_with_a_verdict(self):
         from app.doctor import Check, Report, render
 
@@ -154,6 +175,59 @@ class TestLaunchers:
 
         mode = os.stat(REPO_ROOT / "start.sh").st_mode
         assert mode & stat.S_IXUSR, "start.sh doit être exécutable"
+
+    def test_batch_launcher_has_no_dangling_gotos(self):
+        import re
+
+        source = (REPO_ROOT / "start.bat").read_text(encoding="utf-8")
+        labels = {
+            line.strip()[1:].split()[0].lower()
+            for line in source.splitlines()
+            if line.strip().startswith(":") and not line.strip().startswith("::")
+        }
+        targets = {m.group(1).lower() for m in re.finditer(r"goto\s+:?(\w+)", source, re.I)}
+        assert not (targets - labels), f"labels manquants : {sorted(targets - labels)}"
+
+    def test_batch_launcher_avoids_the_cmd_errorlevel_trap(self):
+        """`%errorlevel%` dans un bloc parenthésé est évalué à la lecture.
+
+        C'est ce qui rendait les tests d'erreur silencieusement faux et faisait
+        partir le script n'importe où sans rien afficher.
+        """
+        import re
+
+        for line in (REPO_ROOT / "start.bat").read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("REM"):
+                continue
+            assert not (
+                "(" in stripped and re.search(r"%errorlevel%", stripped, re.I)
+            ), f"piège %errorlevel% : {stripped}"
+            assert not re.match(
+                r"if\s+(not\s+)?defined\s+\w+\s+\S+.*&&", stripped, re.I
+            ), f"`&&` après un `if` s'applique au `if` entier : {stripped}"
+
+    def test_batch_launcher_always_pauses_before_closing(self):
+        """En double-clic, une sortie directe referme la fenêtre sur l'erreur."""
+        import re
+
+        source = (REPO_ROOT / "start.bat").read_text(encoding="utf-8")
+        assert "pause" in source.lower()
+        direct_exits = [
+            line for line in source.splitlines() if re.match(r"^\s*exit /b", line, re.I)
+        ]
+        assert not direct_exits, f"sortie sans pause : {direct_exits}"
+
+    def test_launchers_repair_a_venv_without_pip(self):
+        """Panne vécue : venv sans pip, réutilisé à chaque lancement.
+
+        Les deux lanceurs doivent tester pip lui-même — pas seulement la
+        présence de l'interpréteur — et savoir le réamorcer.
+        """
+        for name in ("start.sh", "start.bat"):
+            source = (REPO_ROOT / name).read_text(encoding="utf-8")
+            assert "ensurepip" in source, f"{name} ne sait pas réparer pip"
+            assert "-m pip --version" in source, f"{name} ne vérifie pas que pip fonctionne"
 
     def test_no_pythonpath_prefix_left_in_the_docs(self):
         """`python -m` ajoute déjà le dossier courant au chemin d'import.

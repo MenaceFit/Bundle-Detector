@@ -130,6 +130,32 @@ def check_dependencies() -> Check:
     return Check("Dépendances", OK, "toutes les bibliothèques sont installées")
 
 
+def check_pip() -> Check:
+    """pip absent de l'environnement virtuel — panne fréquente sous Windows.
+
+    Le venv paraît valide (l'interpréteur est là) mais toute installation
+    échoue sur « No module named pip », et un lanceur qui ne teste que la
+    présence du binaire réutilise indéfiniment un environnement mort.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("pip") is not None:
+        return Check("pip", OK, "disponible")
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    return Check(
+        "pip",
+        WARN,
+        "absent de cet environnement Python",
+        "Les dépendances sont installées, donc rien n'est bloqué maintenant, mais toute "
+        + (
+            "mise à jour échouera. Réparez avec :  python -m ensurepip --default-pip  "
+            "ou repartez de zéro :  start.bat reset"
+            if in_venv
+            else "installation de paquet échouera."
+        ),
+    )
+
+
 def check_env_file() -> Check:
     from app.config import REPO_ROOT
 
@@ -346,6 +372,7 @@ async def run_checks(*, need_discord: bool = True) -> Report:
     report.add(check_python())
     report.add(check_disk_space())
     deps = report.add(check_dependencies())
+    report.add(check_pip())
     if deps.status == FAIL:
         return report  # inutile d'aller plus loin
 

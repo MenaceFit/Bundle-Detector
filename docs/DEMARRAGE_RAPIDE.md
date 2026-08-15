@@ -142,6 +142,30 @@ Elle vérifie tout — Python, dépendances, `.env`, format du token, connexion
 réelle à Discord et au RPC, base de données, cache — et pour chaque problème,
 affiche l'action exacte à faire.
 
+### « No module named pip » / « L'installation des dépendances a échoué »
+
+L'environnement virtuel a été créé **sans pip**. Cela arrive quand une première
+tentative a été interrompue, ou avec certaines installations de Python
+(notamment celle du Microsoft Store).
+
+Le lanceur détecte et répare ce cas tout seul : il teste pip, tente
+`ensurepip`, et reconstruit l'environnement si nécessaire. Si le message
+persiste :
+
+```
+start.bat reset       ou      ./start.sh reset
+```
+
+puis relancez. Cela supprime `.venv` et repart de zéro.
+
+Si même après un `reset` pip reste introuvable, votre Python n'inclut pas
+`ensurepip`. Désinstallez-le et réinstallez **Python 3.12 depuis
+python.org** (pas la version du Microsoft Store), en cochant
+« Add python.exe to PATH ».
+
+> Ce message parlait à tort d'espace disque dans une version précédente. Il
+> nomme désormais les vraies causes.
+
 ### « Le bot démarre puis se ferme »
 
 Le diagnostic est vert, les commandes apparaissent dans Discord, mais le
