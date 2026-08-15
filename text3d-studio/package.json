@@ -5,6 +5,9 @@
   "description": "Éditeur local de texte 3D et de typographie animée",
   "main": "dist-electron/main.js",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",

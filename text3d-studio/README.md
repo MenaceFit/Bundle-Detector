@@ -35,6 +35,17 @@ l'URL.
 npm run dev:web     # force le mode navigateur (Chrome / Edge recommandés)
 ```
 
+Node 20 ou plus récent est requis.
+
+### Si la fenêtre native ne s'ouvre pas
+
+Le serveur de développement n'est jamais coupé par un échec côté bureau : si
+Electron ne démarre pas (installation incomplète, pilote graphique, machine
+sans affichage), le script affiche la raison et l'application reste accessible
+à l'URL indiquée dans le terminal. Vous pouvez continuer à travailler dans
+Chrome ou Edge — seuls les dialogues de fichiers natifs changent (le navigateur
+utilise téléchargements et sélecteur de fichiers à la place).
+
 ## Build production
 
 ```bash
