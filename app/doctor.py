@@ -68,6 +68,42 @@ def check_python() -> Check:
     return Check("Python", OK, f"Python {version}")
 
 
+#: Marge minimale confortable : le venv pèse ~450 Mo, la base et les exports
+#: grossissent, et un disque saturé produit des erreurs déroutantes plutôt
+#: qu'un message clair.
+MIN_FREE_MB = 500
+
+
+def check_disk_space() -> Check:
+    import shutil
+
+    from app.config import REPO_ROOT
+
+    try:
+        free_mb = shutil.disk_usage(REPO_ROOT).free / (1024 * 1024)
+    except OSError as exc:  # pragma: no cover - défensif
+        return Check("Espace disque", WARN, f"non mesurable : {exc}")
+
+    if free_mb < 100:
+        return Check(
+            "Espace disque",
+            FAIL,
+            f"{free_mb:.0f} Mo libres — insuffisant",
+            "Un disque saturé fait échouer l'installation, l'écriture de la base et "
+            "les exports, souvent avec des erreurs incompréhensibles. Libérez au moins "
+            f"{MIN_FREE_MB} Mo puis relancez.",
+            blocking=True,
+        )
+    if free_mb < MIN_FREE_MB:
+        return Check(
+            "Espace disque",
+            WARN,
+            f"{free_mb:.0f} Mo libres — peu",
+            f"Prévoyez {MIN_FREE_MB} Mo : l'environnement Python en occupe déjà ~450.",
+        )
+    return Check("Espace disque", OK, f"{free_mb / 1024:.1f} Go libres")
+
+
 def check_dependencies() -> Check:
     missing: list[str] = []
     for module, package in (
@@ -147,7 +183,10 @@ def check_rpc_url(settings: Settings) -> Check:
         return Check(
             "URL RPC", FAIL, f"{url} n'est pas une URL", "L'URL doit commencer par https://", blocking=True
         )
-    if "api.mainnet-beta.solana.com" in url and not settings.helius_api_key:
+    # `rpc_endpoints` place Helius en tête quand la clé est présente : c'est
+    # l'endpoint réellement utilisé, donc c'est celui qu'il faut afficher.
+    effective = settings.rpc_endpoints[0] if settings.rpc_endpoints else url
+    if "api.mainnet-beta.solana.com" in effective:
         return Check(
             "URL RPC",
             WARN,
@@ -155,7 +194,10 @@ def check_rpc_url(settings: Settings) -> Check:
             "Utilisable pour un premier test. Pour un usage réel, prenez un endpoint payant "
             "(Helius, QuickNode, Triton…) ou définissez HELIUS_API_KEY.",
         )
-    return Check("URL RPC", OK, url.split("?")[0])
+    label = effective.split("?")[0]
+    if len(settings.rpc_endpoints) > 1:
+        label += f"  (+{len(settings.rpc_endpoints) - 1} secours)"
+    return Check("URL RPC", OK, label)
 
 
 def check_guilds(settings: Settings) -> Check:
@@ -302,6 +344,7 @@ async def check_cache(settings: Settings) -> Check:
 async def run_checks(*, need_discord: bool = True) -> Report:
     report = Report()
     report.add(check_python())
+    report.add(check_disk_space())
     deps = report.add(check_dependencies())
     if deps.status == FAIL:
         return report  # inutile d'aller plus loin

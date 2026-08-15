@@ -12,6 +12,44 @@ from app.providers.base import DataQuality
 from app.providers.registry import ProviderHub
 from tests.support.chain import FakeRpc, SyntheticChain
 
+#: Variables lues par `Settings`. Une valeur héritée du shell ou d'un `.env`
+#: rempli ferait passer ou échouer un test selon la machine.
+_SETTINGS_ENV_VARS = (
+    "DISCORD_TOKEN",
+    "DISCORD_GUILD_IDS",
+    "DISCORD_AUTOSCAN_CHANNEL_ID",
+    "DISCORD_ALERT_CHANNEL_ID",
+    "RPC_URL",
+    "RPC_WS_URL",
+    "RPC_URL_SECONDARY",
+    "HELIUS_API_KEY",
+    "SOLSCAN_API_KEY",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "MAX_FUNDING_HOPS",
+    "FIRST_BUYERS_LIMIT",
+    "SCAN_TIMEOUT_SECONDS",
+    "LOG_LEVEL",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Coupe la configuration de l'environnement de la machine.
+
+    Sans cela, un `.env` rempli à la racine du dépôt — exactement ce qu'a un
+    utilisateur réel — fait échouer des tests qui n'ont rien à voir, avec des
+    symptômes qui dépendent de la machine.
+    """
+    from app.config import Settings, reset_settings_cache
+
+    for name in _SETTINGS_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
+
 
 @pytest.fixture(autouse=True)
 async def database(tmp_path: Path) -> AsyncIterator[str]:
