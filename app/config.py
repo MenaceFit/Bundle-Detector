@@ -162,6 +162,30 @@ class Settings(BaseSettings):
     def _coerce_guilds(cls, v: object) -> str:
         return "" if v is None else str(v)
 
+    @field_validator(
+        "discord_autoscan_channel_id",
+        "discord_alert_channel_id",
+        "helius_api_key",
+        "solscan_api_key",
+        "discord_token",
+        "rpc_url_secondary",
+        "redis_url",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_none(cls, v: object) -> object:
+        """Traite une variable d'environnement vide comme absente.
+
+        `.env.example` liste les réglages optionnels avec une valeur vide
+        (`DISCORD_ALERT_CHANNEL_ID=`), ce qui est la façon habituelle de
+        documenter une option. Sans ce validateur, copier le modèle tel quel
+        fait échouer le chargement de la configuration sur « impossible de
+        convertir '' en entier » — avant même que le programme démarre.
+        """
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @property
     def guild_ids(self) -> list[int]:
         out: list[int] = []

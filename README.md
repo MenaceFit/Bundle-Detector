@@ -53,16 +53,26 @@ is no synthetic scoring anywhere in the engine.
 
 ## Quick start
 
+Simplest path — the launcher handles venv, dependencies, config and diagnostics:
+
+```bash
+./start.sh          # Linux/macOS  (start.bat on Windows)
+```
+
+Step-by-step French walkthrough: [`docs/DEMARRAGE_RAPIDE.md`](docs/DEMARRAGE_RAPIDE.md).
+
+Manual equivalent:
+
 ```bash
 git clone <repo> && cd Bundle-Detector
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env          # set RPC_URL (and DISCORD_TOKEN for the bot)
 
 # scan from the terminal — no Discord token needed
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT> --depth full --export
+.venv/bin/python -m scripts.cli <MINT> --depth full --export
 
 # or run the bot
-PYTHONPATH=. .venv/bin/python -m app.main bot
+.venv/bin/python -m app.main bot
 ```
 
 The only required setting is `RPC_URL`. A paid mainnet endpoint is strongly
@@ -255,7 +265,7 @@ addresses freely but rarely change how they operate.
 ## Testing
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m pytest -q     # 117 tests
+.venv/bin/python -m pytest -q     # 117 tests
 .venv/bin/ruff check app scripts tests
 ```
 

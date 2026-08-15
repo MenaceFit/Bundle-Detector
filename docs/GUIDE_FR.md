@@ -50,15 +50,17 @@ cp .env.example .env
 nano .env          # renseignez au minimum RPC_URL
 
 # 4. Vérifier que tout fonctionne (aucun réseau requis)
-PYTHONPATH=. .venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q
 # → 118 passed
 
 # 5. Voir à quoi ressemble un rapport (données de test, hors ligne)
-PYTHONPATH=. .venv/bin/python -m scripts.demo_report private_bundle
+.venv/bin/python -m scripts.demo_report private_bundle
 ```
 
-Sous Windows, remplacez `.venv/bin/` par `.venv\Scripts\` et
-`PYTHONPATH=. …` par `set PYTHONPATH=.` puis la commande.
+Sous Windows, remplacez `.venv/bin/` par `.venv\Scripts\`.
+
+> **Plus simple encore** : `./start.sh` (Linux/macOS) ou `start.bat` (Windows)
+> fait les étapes 2 à 5 tout seul. Voir `docs/DEMARRAGE_RAPIDE.md`.
 
 ### Option B — Docker
 
@@ -139,7 +141,7 @@ relisibles. Lisez `docs/SCORING.md` avant d'y toucher.
 6. Lancez le bot :
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m app.main bot
+.venv/bin/python -m app.main bot
 ```
 
 Les commandes slash apparaissent immédiatement si `DISCORD_GUILD_IDS` est
@@ -154,15 +156,15 @@ Discord).
 
 ```bash
 # Scan complet
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT_PUMPFUN>
+.venv/bin/python -m scripts.cli <MINT_PUMPFUN>
 
 # Rapide / complet / approfondi
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT> --depth quick
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT> --depth full
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT> --depth deep
+.venv/bin/python -m scripts.cli <MINT> --depth quick
+.venv/bin/python -m scripts.cli <MINT> --depth full
+.venv/bin/python -m scripts.cli <MINT> --depth deep
 
 # Avec export JSON / CSV / HTML / PNG
-PYTHONPATH=. .venv/bin/python -m scripts.cli <MINT> --depth deep --export
+.venv/bin/python -m scripts.cli <MINT> --depth deep --export
 ```
 
 Les exports atterrissent dans `exports/<MINT>/`.
@@ -192,7 +194,7 @@ scan.
 ### Via l'API HTTP
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m app.main api --port 8000
+.venv/bin/python -m app.main api --port 8000
 
 curl localhost:8000/health
 curl localhost:8000/validate/<MINT>          # test d'origine Pump.fun seul

@@ -119,11 +119,49 @@ class BundleDetectorBot(commands.Bot):
 
 
 def run() -> None:
+    """Démarre le bot, en traduisant les échecs connus en messages lisibles.
+
+    Une traceback Python ne dit pas à un utilisateur quoi faire. Les trois
+    causes d'échec réelles (token absent, token refusé, intent non activé) ont
+    chacune une action précise, donc chacune a son message.
+    """
     settings = get_settings()
     configure_logging(settings.log_level)
+
     if not settings.discord_token:
-        raise SystemExit("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
-    BundleDetectorBot(settings).run(settings.discord_token, log_handler=None)
+        raise SystemExit(
+            "\n❌ DISCORD_TOKEN n'est pas défini.\n\n"
+            "   1. Copiez le modèle :  cp .env.example .env\n"
+            "   2. Ouvrez .env et renseignez DISCORD_TOKEN=...\n"
+            "      (Discord Developer Portal → votre application → Bot → Reset Token)\n\n"
+            "   Pour un diagnostic complet :  python -m app.main doctor\n"
+        )
+
+    try:
+        BundleDetectorBot(settings).run(settings.discord_token, log_handler=None)
+    except discord.LoginFailure:
+        raise SystemExit(
+            "\n❌ Discord a refusé le token.\n\n"
+            "   Le token est faux, expiré, ou vous avez copié la mauvaise valeur.\n"
+            "   Le token du bot n'est PAS l'Application ID ni le Public Key :\n"
+            "   Developer Portal → onglet « Bot » → bouton « Reset Token ».\n\n"
+            "   Vérifier :  python -m app.main doctor\n"
+        ) from None
+    except discord.PrivilegedIntentsRequired:
+        raise SystemExit(
+            "\n❌ L'intent « MESSAGE CONTENT » n'est pas activé.\n\n"
+            "   Developer Portal → votre application → onglet « Bot »\n"
+            "   → section « Privileged Gateway Intents »\n"
+            "   → activez MESSAGE CONTENT INTENT, puis enregistrez.\n\n"
+            "   Cet intent sert à détecter un mint collé dans un salon.\n"
+        ) from None
+    except KeyboardInterrupt:
+        print("\nArrêt du bot.")
+    except discord.HTTPException as exc:
+        raise SystemExit(
+            f"\n❌ Discord est injoignable ou a rejeté la connexion : {exc}\n\n"
+            "   Vérifiez votre connexion réseau (pare-feu, proxy, VPN).\n"
+        ) from None
 
 
 if __name__ == "__main__":  # pragma: no cover

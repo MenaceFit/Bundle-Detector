@@ -1,8 +1,12 @@
-"""Process entry point.
+"""Point d'entrée.
 
-    python -m app.main bot   # Discord bot (default)
-    python -m app.main api   # FastAPI service
+    python -m app.main doctor        # vérifie la configuration
+    python -m app.main bot           # bot Discord (défaut)
+    python -m app.main api           # service HTTP
     python -m app.main scan <mint> [--depth quick|full|deep]
+
+À lancer depuis la racine du projet. Avec `python -m`, Python ajoute le
+dossier courant au chemin d'import : aucun PYTHONPATH n'est nécessaire.
 """
 
 from __future__ import annotations
@@ -37,6 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pfbd", description="Pump.fun bundle detector")
     sub = parser.add_subparsers(dest="command")
 
+    doctor = sub.add_parser("doctor", help="vérifie la configuration et explique quoi corriger")
+    doctor.add_argument(
+        "--no-discord",
+        action="store_true",
+        help="ignore les vérifications Discord (usage CLI seul)",
+    )
+
     sub.add_parser("bot", help="run the Discord bot")
 
     api = sub.add_parser("api", help="run the HTTP API")
@@ -51,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(get_settings().log_level)
 
     command = args.command or "bot"
+    if command == "doctor":
+        from app.doctor import main as doctor_main
+
+        return doctor_main(need_discord=not args.no_discord)
     if command == "bot":
         _run_bot()
         return 0
