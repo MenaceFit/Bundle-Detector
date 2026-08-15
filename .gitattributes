@@ -1,0 +1,22 @@
+# Les fichiers batch DOIVENT avoir des fins de ligne CRLF.
+#
+# cmd.exe suit un décalage d'octets dans le fichier pendant l'exécution. Avec
+# des LF seuls, ce décalage dérive d'un octet par ligne : la console finit par
+# exécuter des fragments de lignes ("REM" devient "EM" puis "M"), et le script
+# part n'importe où. Le fichier paraît pourtant parfaitement normal à la
+# lecture, ce qui rend la panne très déroutante.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Les scripts shell doivent rester en LF, y compris sur une machine Windows.
+*.sh text eol=lf
+
+# Tout le reste : LF dans le dépôt.
+* text=auto eol=lf
+
+# Binaires : jamais de conversion.
+*.png binary
+*.jpg binary
+*.zip binary
+*.db binary

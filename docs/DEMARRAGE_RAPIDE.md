@@ -142,6 +142,31 @@ Elle vérifie tout — Python, dépendances, `.env`, format du token, connexion
 réelle à Discord et au RPC, base de données, cache — et pour chaque problème,
 affiche l'action exacte à faire.
 
+### « 'REM' n'est pas reconnu », « 'EM' », « 'M' », « 'f' »…
+
+Si la console déroule des dizaines d'erreurs sur des mots tronqués, avec des
+fragments de plus en plus courts :
+
+```
+'---' n'est pas reconnu en tant que commande interne
+'Ecrit' n'est pas reconnu en tant que commande interne
+'EM' n'est pas reconnu ...
+'M' n'est pas reconnu ...
+'f' n'est pas reconnu ...
+```
+
+…c'est que `start.bat` a des fins de ligne **Unix (LF)** au lieu de
+**Windows (CRLF)**.
+
+`cmd.exe` suit un décalage d'octets dans le fichier pendant qu'il l'exécute.
+Avec des LF seuls, ce décalage dérive d'un octet par ligne : la console finit
+par exécuter des morceaux de lignes. Le fichier paraît pourtant parfaitement
+normal quand on l'ouvre.
+
+Le fichier livré est en CRLF et un test le vérifie. Si vous éditez `start.bat`,
+utilisez un éditeur qui préserve les CRLF (Notepad++, VS Code) — surtout pas
+un éditeur Unix ni un copier-coller depuis un terminal Linux.
+
 ### « No module named pip » / « L'installation des dépendances a échoué »
 
 L'environnement virtuel a été créé **sans pip**. Cela arrive quand une première

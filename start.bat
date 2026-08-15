@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM  Pump.fun Bundle Detector — lanceur Windows
+REM  Pump.fun Bundle Detector - lanceur Windows
 REM
 REM    start.bat              demarre le bot Discord
 REM    start.bat doctor       verifie la configuration
@@ -29,7 +29,7 @@ if "%COMMAND%"=="" set "COMMAND=bot"
 REM --- 1. Python du systeme --------------------------------------------------
 REM Ecrit en plusieurs lignes a dessein : dans cmd.exe, `&&` s'applique a la
 REM commande `if` entiere, donc `if not defined X cmd && set X=...` execute le
-REM `set` meme quand la condition est fausse — et ecraserait le lanceur trouve.
+REM `set` meme quand la condition est fausse - et ecraserait le lanceur trouve.
 set "LAUNCHER="
 where py >nul 2>&1
 if not errorlevel 1 set "LAUNCHER=py -3"
@@ -46,7 +46,7 @@ REM --- 2. Environnement virtuel, avec reparation -----------------------------
 REM Un venv dont pip n'a pas ete amorce est le mode de panne le plus courant
 REM sous Windows : python.exe est bien la, donc l'environnement parait valide,
 REM mais toute installation echoue sur "No module named pip". Verifier la
-REM presence du binaire ne suffit donc pas — on teste pip lui-meme.
+REM presence du binaire ne suffit donc pas - on teste pip lui-meme.
 if not exist "%VENV_PY%" goto :create_venv
 goto :check_pip
 

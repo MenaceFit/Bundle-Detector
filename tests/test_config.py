@@ -176,6 +176,37 @@ class TestLaunchers:
         mode = os.stat(REPO_ROOT / "start.sh").st_mode
         assert mode & stat.S_IXUSR, "start.sh doit être exécutable"
 
+    def test_batch_launcher_uses_windows_line_endings(self):
+        """Régression : un .bat en LF fait dérailler cmd.exe.
+
+        cmd.exe suit un décalage d'octets dans le fichier pendant l'exécution.
+        Avec des LF seuls, ce décalage dérive d'un octet par ligne, et la
+        console finit par exécuter des fragments : « REM » devient « EM » puis
+        « M », « if » devient « f ». Le fichier paraît normal à la lecture,
+        donc la panne est très difficile à relier à sa cause.
+        """
+        raw = (REPO_ROOT / "start.bat").read_bytes()
+        assert raw.count(b"\r\n") > 50, "start.bat doit utiliser des fins de ligne CRLF"
+        assert raw.count(b"\n") == raw.count(b"\r\n"), "aucun LF orphelin ne doit subsister"
+
+    def test_batch_launcher_is_pure_ascii(self):
+        """Un caractère accentué s'affiche différemment selon la page de codes.
+
+        Rester en ASCII supprime toute dépendance à cp850/cp1252/UTF-8.
+        """
+        raw = (REPO_ROOT / "start.bat").read_bytes()
+        raw.decode("ascii")  # lève UnicodeDecodeError si un octet dépasse 127
+
+    def test_gitattributes_pins_batch_line_endings(self):
+        """Sans cela, git reconvertirait le fichier en LF au prochain checkout."""
+        attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert "*.bat" in attributes and "eol=crlf" in attributes
+
+    def test_shell_launcher_uses_unix_line_endings(self):
+        """Inversement, un .sh en CRLF échoue sur « bad interpreter »."""
+        raw = (REPO_ROOT / "start.sh").read_bytes()
+        assert b"\r\n" not in raw, "start.sh doit rester en LF"
+
     def test_batch_launcher_has_no_dangling_gotos(self):
         import re
 
