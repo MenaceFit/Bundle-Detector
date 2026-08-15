@@ -1,0 +1,63 @@
+{
+  "name": "text3d-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Éditeur local de texte 3D et de typographie animée",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "build": "npm run typecheck && vite build && npm run build:electron",
+    "build:electron": "tsc -p electron/tsconfig.json && node scripts/finalize-electron.mjs",
+    "build:desktop": "npm run build && electron-builder",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0"
+  },
+  "build": {
+    "appId": "studio.text3d.app",
+    "productName": "Text3D Studio",
+    "files": [
+      "dist/**",
+      "dist-electron/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
