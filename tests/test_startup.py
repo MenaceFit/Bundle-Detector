@@ -87,6 +87,65 @@ class TestSetupHook:
         BundleDetectorBot._on_watch_task_done(task)  # ne doit pas lever
 
 
+class TestPrivilegedIntent:
+    """L'intent MESSAGE CONTENT ne doit jamais empêcher le bot de démarrer.
+
+    Il ne sert qu'à la détection automatique d'un mint collé dans un salon.
+    Les commandes slash — l'essentiel de l'outil — n'en dépendent pas.
+    """
+
+    def test_default_requests_message_content(self, bot_settings):
+        from app.discord.bot import BundleDetectorBot
+
+        assert BundleDetectorBot(bot_settings).intents.message_content is True
+
+    def test_fallback_mode_drops_only_that_intent(self, bot_settings):
+        from app.discord.bot import BundleDetectorBot
+
+        lite = BundleDetectorBot(bot_settings, message_content=False)
+        assert lite.intents.message_content is False
+        # Tout le reste des intents par défaut doit rester intact.
+        assert lite.intents.guilds is True
+
+    async def test_autodetect_is_inert_without_the_intent(self, bot_settings):
+        """Sans l'intent, `message.content` est vide : ne rien tenter."""
+        from app.discord.bot import BundleDetectorBot
+
+        bot = BundleDetectorBot(bot_settings, message_content=False)
+        message = MagicMock(spec=discord.Message)
+        message.author = MagicMock()
+        message.author.bot = False
+        message.content = ""
+        message.channel = MagicMock()
+        message.channel.id = bot_settings.discord_autoscan_channel_id or 1
+        message.channel.send = AsyncMock()
+
+        await bot.on_message(message)  # ne doit rien faire, ni lever
+
+        message.channel.send.assert_not_awaited()
+
+    def test_run_retries_without_the_intent(self, bot_settings, monkeypatch):
+        """Le repli doit relancer un bot complet, pas abandonner."""
+        from app.discord import bot as bot_module
+
+        attempts: list[bool] = []
+
+        class FakeBot:
+            def __init__(self, settings, *, message_content: bool = True) -> None:
+                attempts.append(message_content)
+
+            def run(self, token, **kwargs):
+                if attempts[-1]:
+                    raise discord.PrivilegedIntentsRequired(shard_id=None)
+
+        monkeypatch.setattr(bot_module, "BundleDetectorBot", FakeBot)
+        monkeypatch.setattr(bot_module, "get_settings", lambda: bot_settings)
+
+        bot_module.run()
+
+        assert attempts == [True, False], "le bot doit réessayer sans l'intent privilégié"
+
+
 class TestCommandErrorHandler:
     """« L'application ne répond pas » signifie : l'interaction n'a pas été acquittée."""
 

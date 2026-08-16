@@ -32,9 +32,17 @@ EXTENSIONS = (
 
 
 class BundleDetectorBot(commands.Bot):
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, *, message_content: bool = True) -> None:
+        """``message_content`` gouverne la seule fonctionnalité qui en dépend.
+
+        L'intent MESSAGE CONTENT ne sert qu'à la détection automatique d'un
+        mint collé dans un salon. Les commandes slash n'en ont aucun besoin, et
+        refuser de démarrer parce qu'une fonctionnalité *optionnelle* n'est pas
+        autorisée serait un mauvais compromis : `run()` relance donc le bot
+        sans cet intent plutôt que d'abandonner.
+        """
         intents = discord.Intents.default()
-        intents.message_content = True  # required for auto-detection in a channel
+        intents.message_content = message_content
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
         self.settings = settings or get_settings()
         self.hub: ProviderHub | None = None
@@ -101,7 +109,15 @@ class BundleDetectorBot(commands.Bot):
         self._ready_announced = True
         log.info("bot ready", user=str(self.user), guilds=len(self.guilds))
         print(f"\n✅ Bot en ligne : {self.user}  ({len(self.guilds)} serveur(s))")
-        print("   Tapez /scan dans Discord. Ctrl+C pour arrêter.\n")
+        print("   Tapez /scan dans Discord. Ctrl+C pour arrêter.")
+        if not self.intents.message_content:
+            print(
+                "\n   ℹ️  Détection automatique désactivée (intent MESSAGE CONTENT non\n"
+                "      autorisé). Toutes les commandes slash fonctionnent normalement.\n"
+                "      Pour coller un mint directement dans un salon : Developer Portal\n"
+                "      → Bot → Privileged Gateway Intents → MESSAGE CONTENT INTENT."
+            )
+        print()
 
     async def on_disconnect(self) -> None:
         log.warning("disconnected from Discord (reconnection will be attempted)")
@@ -146,7 +162,14 @@ class BundleDetectorBot(commands.Bot):
 
     # ------------------------------------------------------------------
     async def on_message(self, message: discord.Message) -> None:
-        """Auto-detect a pasted mint in the configured channel (§52)."""
+        """Auto-detect a pasted mint in the configured channel (§52).
+
+        Sans l'intent MESSAGE CONTENT, ``message.content`` arrive vide pour les
+        messages des autres utilisateurs : la détection est alors inopérante,
+        et c'est signalé au démarrage plutôt que de rester un mystère.
+        """
+        if not self.intents.message_content:
+            return
         if message.author.bot or not message.content:
             return
         channel_id = self.settings.discord_autoscan_channel_id
@@ -215,8 +238,35 @@ def run() -> None:
     # Le heartbeat du websocket est bavard et sans intérêt ici.
     logging.getLogger("discord.gateway").setLevel(logging.WARNING)
 
+    # Les avertissements PyNaCl/davey concernent le support voix, que ce bot
+    # n'utilise pas : ce sont deux lignes de bruit avant chaque démarrage.
+    logging.getLogger("discord.client").addFilter(
+        lambda record: "voice will NOT be supported" not in record.getMessage()
+    )
+
     try:
         BundleDetectorBot(settings).run(settings.discord_token, log_handler=None)
+    except discord.PrivilegedIntentsRequired:
+        # L'intent MESSAGE CONTENT ne sert qu'à la détection automatique d'un
+        # mint collé dans un salon. Plutôt que de refuser de démarrer pour une
+        # fonctionnalité optionnelle, on relance sans lui : les commandes slash
+        # — c'est-à-dire l'essentiel de l'outil — fonctionnent immédiatement.
+        print(
+            "\n⚠️  L'intent « MESSAGE CONTENT » n'est pas autorisé pour ce bot.\n"
+            "   Démarrage sans la détection automatique ; les commandes slash\n"
+            "   (/scan, /quickscan, /deepscan…) fonctionnent normalement.\n\n"
+            "   Pour l'activer plus tard : Developer Portal → votre application\n"
+            "   → onglet « Bot » → Privileged Gateway Intents\n"
+            "   → MESSAGE CONTENT INTENT → Save Changes.\n"
+        )
+        log.warning("message content intent unavailable; auto-detection disabled")
+        try:
+            BundleDetectorBot(settings, message_content=False).run(
+                settings.discord_token, log_handler=None
+            )
+        except KeyboardInterrupt:
+            print("\nArrêt du bot.")
+            return
     except discord.LoginFailure:
         raise SystemExit(
             "\n❌ Discord a refusé le token.\n\n"
@@ -224,14 +274,6 @@ def run() -> None:
             "   Le token du bot n'est PAS l'Application ID ni le Public Key :\n"
             "   Developer Portal → onglet « Bot » → bouton « Reset Token ».\n\n"
             "   Vérifier :  python -m app.main doctor\n"
-        ) from None
-    except discord.PrivilegedIntentsRequired:
-        raise SystemExit(
-            "\n❌ L'intent « MESSAGE CONTENT » n'est pas activé.\n\n"
-            "   Developer Portal → votre application → onglet « Bot »\n"
-            "   → section « Privileged Gateway Intents »\n"
-            "   → activez MESSAGE CONTENT INTENT, puis enregistrez.\n\n"
-            "   Cet intent sert à détecter un mint collé dans un salon.\n"
         ) from None
     except KeyboardInterrupt:
         print("\nArrêt du bot.")

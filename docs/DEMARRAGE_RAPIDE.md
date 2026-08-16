@@ -191,6 +191,24 @@ python.org** (pas la version du Microsoft Store), en cochant
 > Ce message parlait à tort d'espace disque dans une version précédente. Il
 > nomme désormais les vraies causes.
 
+### « L'intent MESSAGE CONTENT n'est pas autorisé »
+
+Le bot **démarre quand même** et toutes les commandes slash fonctionnent. Seule
+la détection automatique — coller un mint directement dans un salon — est
+inactive.
+
+Pour l'activer, 30 secondes :
+
+1. <https://discord.com/developers/applications> → votre application
+2. Menu de gauche → **Bot**
+3. Descendez jusqu'à **Privileged Gateway Intents**
+4. Activez **MESSAGE CONTENT INTENT**
+5. **Save Changes** en bas de page
+6. Relancez le bot
+
+> Si votre bot dépasse 100 serveurs, Discord exige une vérification pour
+> accorder cet intent. En dessous, l'interrupteur suffit.
+
 ### « Le bot démarre puis se ferme »
 
 Le diagnostic est vert, les commandes apparaissent dans Discord, mais le
