@@ -55,7 +55,7 @@ from app.models.enums import LifecycleState, ScanDepth
 from app.models.scoring import Evidence, ScanReport
 from app.models.token import TokenProfile
 from app.models.wallet import CreatorProfile, WalletProfile
-from app.providers.base import CoverageLevel
+from app.providers.base import CoverageLevel, ProviderError
 from app.providers.registry import ProviderHub
 from app.pumpfun import mayhem as mayhem_module
 from app.pumpfun.graduation import apply_graduation_events, read_global_initial_reserves
@@ -287,13 +287,25 @@ class ScanOrchestrator:
                 funding_analyzer,
                 sample_size=plan.creator_sample,
             )
-            creator_profile = await creator_analyzer.analyze(
-                profile.creator,
-                current_mint=mint,
-                buyer_funding=funding,
-                max_hops=self.settings.max_funding_hops,
-                check_graduations=plan.check_graduations,
-            )
+            try:
+                creator_profile = await creator_analyzer.analyze(
+                    profile.creator,
+                    current_mint=mint,
+                    buyer_funding=funding,
+                    max_hops=self.settings.max_funding_hops,
+                    check_graduations=plan.check_graduations,
+                )
+            except ProviderError as exc:
+                # L'analyse du créateur est la plus gourmande en requêtes, donc
+                # la première à souffrir d'un endpoint saturé. Elle enrichit le
+                # rapport, elle ne le conditionne pas : on continue sans.
+                log.warning("creator analysis unavailable", wallet=profile.creator, error=str(exc))
+                creator_profile = CreatorProfile(address=profile.creator)
+                self.hub.quality.set_coverage(
+                    "creator_history",
+                    CoverageLevel.MISSING,
+                    "analyse du créateur interrompue (fournisseur RPC indisponible)",
+                )
             await step("creator")
         elif profile.creator:
             creator_profile = CreatorProfile(address=profile.creator)

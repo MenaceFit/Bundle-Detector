@@ -82,6 +82,20 @@ def compute(
             for key, level in quality.coverage.items()
             if level.weight < 1.0
         )
+    if providers < 0.9:
+        # Un fournisseur en échec est une limitation en soi, même quand la
+        # couverture reste correcte : sans cette ligne, un rapport bâti sur un
+        # endpoint à moitié mort paraissait aussi solide qu'un autre.
+        failing = sorted(
+            name
+            for name, health in quality.providers.items()
+            if health.requests > 0 and health.success_rate < 0.9
+        )
+        limitations.append(
+            "Fournisseur(s) en difficulté pendant le scan"
+            + (f" : {', '.join(failing)}" if failing else "")
+            + f" ({providers * 100:.0f}% de requêtes abouties) — des données peuvent manquer."
+        )
     if history < 0.5:
         limitations.append("Historical Pump.fun lookback was shallow; repeat-behaviour signals are weak.")
     limitations.extend(contradictions)

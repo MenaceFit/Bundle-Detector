@@ -139,10 +139,22 @@ class BundleDetectorBot(commands.Bot):
             command=getattr(interaction.command, "name", "?"),
             error=f"{type(error).__name__}: {error}",
         )
-        message = (
-            f"❌ La commande a échoué.\n```\n{type(error).__name__}: {str(error)[:400]}\n```\n"
-            "Le détail complet est dans la console du bot."
-        )
+        from app.providers.base import ProviderError
+
+        if isinstance(error.__cause__ or error, ProviderError):
+            # Cause de loin la plus fréquente : l'endpoint RPC sature. Un nom de
+            # classe interne n'aide personne ; la conduite à tenir, si.
+            message = (
+                "⏳ Le fournisseur RPC n'a pas répondu (saturation ou limite de débit).\n\n"
+                "• Réessayez dans une minute — le débit se réajuste automatiquement\n"
+                "• Ou utilisez `/quickscan`, bien plus économe en requêtes\n"
+                "• `/settings` affiche l'état des fournisseurs"
+            )
+        else:
+            message = (
+                f"❌ La commande a échoué.\n```\n{type(error).__name__}: {str(error)[:400]}\n```\n"
+                "Le détail complet est dans la console du bot."
+            )
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)

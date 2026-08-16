@@ -142,8 +142,12 @@ class Settings(BaseSettings):
     # --- Engine ---
     max_funding_hops: int = 3
     first_buyers_limit: int = 100
-    max_concurrent_rpc: int = 16
-    rpc_requests_per_second: float = 25.0
+    # Calibré pour une offre RPC gratuite (Helius gratuit ≈ 10 req/s). Le seau
+    # à jetons s'adapte tout seul en cas de 429, mais partir trop haut déclenche
+    # une rafale de throttling dès les premières secondes d'un scan. Montez ces
+    # deux valeurs si votre endpoint est payant.
+    max_concurrent_rpc: int = 8
+    rpc_requests_per_second: float = 8.0
     history_max_signatures: int = 1000
     scan_timeout_seconds: int = 180
     log_level: str = "INFO"

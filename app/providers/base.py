@@ -17,6 +17,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+# Réexport : la hiérarchie d'erreurs vit dans `app.utils.errors` pour que
+# `CircuitBreakerOpen` puisse hériter de `ProviderError` sans import circulaire
+# avec la couche concurrence. Les modules existants continuent de l'importer
+# depuis ici, où elle a toujours été.
+from app.utils.errors import (  # noqa: F401  (réexport volontaire)
+    CircuitBreakerOpen,
+    ProviderError,
+    RateLimitedError,
+)
+
 
 class ProviderStatus(str, Enum):
     OK = "ok"
@@ -152,12 +162,6 @@ class DataQuality:
         }
 
 
-class ProviderError(RuntimeError):
-    """Any recoverable provider-side failure (HTTP, RPC error, timeout)."""
-
-
-class RateLimitedError(ProviderError):
-    """HTTP 429 / provider-signalled throttling."""
 
 
 # ---------------------------------------------------------------------------

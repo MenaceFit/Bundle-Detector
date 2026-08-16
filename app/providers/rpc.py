@@ -102,9 +102,15 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
 
         elapsed = time.monotonic() - start
         if response.status_code == 429:
-            breaker.record_failure()
-            health.record(elapsed, False, "HTTP 429")
-            raise RateLimitedError(f"{label}: rate limited")
+            # Contre-pression, pas panne : on ralentit le seau et on laisse le
+            # disjoncteur fermé. Compter les 429 comme des échecs faisait
+            # d'un endpoint saturé un endpoint « mort » pendant 30 secondes.
+            breaker.record_throttle()
+            self._bucket.slow_down()
+            health.record(elapsed, False, "HTTP 429 (rate limited)")
+            raise RateLimitedError(
+                f"{label}: rate limited (débit ramené à {self._bucket.rate:.0f}/s)"
+            )
         if response.status_code >= 500:
             breaker.record_failure()
             health.record(elapsed, False, f"HTTP {response.status_code}")
@@ -122,6 +128,7 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
             raise ProviderError(f"{label}: invalid JSON response") from exc
 
         breaker.record_success()
+        self._bucket.record_success()
         health.record(elapsed, True)
         self.quality.rpc_requests += 1 if not isinstance(payload, list) else len(payload)
         return body

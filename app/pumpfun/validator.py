@@ -36,6 +36,15 @@ NOT_PUMPFUN_MESSAGE = (
 )
 
 
+class ProviderUnavailableError(RuntimeError):
+    """Le RPC n'a pas pu répondre : on ne sait pas, et on le dit.
+
+    Volontairement distinct de « ce n'est pas un token Pump.fun ». Rendre un
+    verdict quand aucune donnée n'a pu être lue serait la pire réponse
+    possible pour un outil dont tout l'intérêt est la traçabilité.
+    """
+
+
 class PumpFunValidator:
     def __init__(self, hub: ProviderHub) -> None:
         self.hub = hub
@@ -52,11 +61,17 @@ class PumpFunValidator:
         curve_address = bonding_curve_pda(mint)
         result.bonding_curve = curve_address
 
+        # Distinguer « le compte n'existe pas » de « je n'ai pas pu regarder ».
+        # Les confondre ferait dire au scanner « ce n'est pas un token Pump.fun »
+        # alors que le RPC est simplement injoignable : une panne d'infra
+        # déguisée en verdict, ce qui est pire que pas de réponse du tout.
+        read_failed = False
         try:
             account = await self.hub.rpc.get_account_info(curve_address)
         except ProviderError as exc:
             log.warning("bonding curve read failed", mint=mint, error=str(exc))
             account = None
+            read_failed = True
 
         curve_state = None
         if account:
@@ -77,12 +92,20 @@ class PumpFunValidator:
             result.graduation_status = "GRADUATED" if curve_state.get("complete") else "BONDING_CURVE"
         else:
             # Fallback: look for Pump program activity in the mint's own history.
-            touched = await self._touches_pump_program(mint)
+            touched, fallback_failed = await self._touches_pump_program(mint)
             result.checks["pump_program_activity"] = touched
             if touched:
                 result.is_pumpfun_token = True
                 result.launch_source = "pump.fun program activity"
                 result.pumpfun_program_activity = True
+            elif read_failed and fallback_failed:
+                # Aucune des deux vérifications n'a pu aboutir : on ne sait pas,
+                # et le dire est la seule réponse honnête.
+                raise ProviderUnavailableError(
+                    "Impossible de joindre le RPC Solana pour vérifier l'origine de ce token. "
+                    "Ce n'est pas un verdict sur le token : réessayez, ou vérifiez votre "
+                    "endpoint RPC (`/settings` affiche l'état des fournisseurs)."
+                )
             else:
                 result.reason = (
                     "No Pump.fun bonding curve exists for this mint and no Pump.fun program "
@@ -99,23 +122,32 @@ class PumpFunValidator:
 
         return result
 
-    async def _touches_pump_program(self, mint: str) -> bool:
-        """Cheap fallback: does the mint's earliest known history involve Pump?"""
+    async def _touches_pump_program(self, mint: str) -> tuple[bool, bool]:
+        """Repli : l'historique du mint touche-t-il le programme Pump ?
+
+        Renvoie ``(touché, la_lecture_a_échoué)``. Le second drapeau est ce qui
+        permet de ne pas confondre « rien trouvé » et « rien pu regarder ».
+        """
         try:
             signatures = await self.hub.rpc.get_signatures(mint, limit=25)
         except ProviderError:
-            return False
+            return False, True
         if not signatures:
-            return False
+            return False, False
         sigs = [s["signature"] for s in signatures[:10] if s.get("signature")]
-        transactions = await self.hub.rpc.get_transactions(sigs)
+        try:
+            transactions = await self.hub.rpc.get_transactions(sigs)
+        except ProviderError:
+            return False, True
+        if not any(raw for raw in transactions.values()):
+            return False, True
         for sig, raw in transactions.items():
             parsed = parse_transaction(raw, sig)
             if parsed and (
                 PUMP_FUN_PROGRAM_ID in parsed.programs or PUMP_SWAP_PROGRAM_ID in parsed.programs
             ):
-                return True
-        return False
+                return True, False
+        return False, False
 
     async def _find_creation(self, mint: str, curve_address: str) -> dict | None:
         """Locate the ``create`` transaction and read its ``CreateEvent``.

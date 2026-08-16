@@ -239,6 +239,127 @@ class TestScanTimeout:
             assert await _execute(bot, "mint", ScanDepth.FULL, requested_by=None) == sentinel
 
 
+class TestProviderResilience:
+    """Un endpoint saturé doit dégrader le rapport, pas casser le scan."""
+
+    def test_circuit_breaker_open_is_a_provider_error(self):
+        """Régression : les deux étaient frères, pas parent/enfant.
+
+        Vingt-cinq `except ProviderError` assurent la dégradation gracieuse du
+        moteur. Tant que `CircuitBreakerOpen` héritait de `RuntimeError` en
+        parallèle, ils le laissaient tous passer : un disjoncteur ouvert
+        faisait échouer un scan entier au lieu de simplement priver le rapport
+        d'une donnée.
+        """
+        from app.providers.base import ProviderError
+        from app.utils.errors import CircuitBreakerOpen, RateLimitedError
+
+        assert issubclass(CircuitBreakerOpen, ProviderError)
+        assert issubclass(RateLimitedError, ProviderError)
+
+    def test_throttling_does_not_open_the_circuit(self):
+        """Un 429 veut dire « ralentis », pas « le fournisseur est mort »."""
+        from app.utils.concurrency import CircuitBreaker
+
+        breaker = CircuitBreaker(name="test", threshold=5)
+        for _ in range(20):
+            breaker.record_throttle()
+        assert not breaker.is_open
+        assert breaker.throttles == 20
+
+    def test_throttling_resets_the_hard_failure_count(self):
+        """Le fournisseur a répondu : c'est l'inverse d'une panne."""
+        from app.utils.concurrency import CircuitBreaker
+
+        breaker = CircuitBreaker(name="test", threshold=3)
+        breaker.record_failure()
+        breaker.record_failure()
+        breaker.record_throttle()
+        breaker.record_failure()
+        assert not breaker.is_open, "le compteur d'échecs durs doit repartir de zéro"
+
+    def test_hard_failures_still_open_the_circuit(self):
+        from app.utils.concurrency import CircuitBreaker
+
+        breaker = CircuitBreaker(name="test", threshold=3)
+        for _ in range(3):
+            breaker.record_failure()
+        assert breaker.is_open
+
+    def test_bucket_halves_its_rate_on_throttle(self):
+        from app.utils.concurrency import TokenBucket
+
+        bucket = TokenBucket(16.0)
+        assert bucket.slow_down() == 8.0
+        assert bucket.slow_down() == 4.0
+        assert bucket.throttle_events == 2
+
+    def test_bucket_never_stalls_completely(self):
+        from app.utils.concurrency import TokenBucket
+
+        bucket = TokenBucket(16.0)
+        for _ in range(50):
+            bucket.slow_down()
+        assert bucket.rate >= TokenBucket.MIN_RATE
+
+    def test_bucket_recovers_after_sustained_success(self):
+        from app.utils.concurrency import TokenBucket
+
+        bucket = TokenBucket(16.0)
+        bucket.slow_down()
+        reduced = bucket.rate
+        for _ in range(TokenBucket.RECOVERY_AFTER * 3):
+            bucket.record_success()
+        assert bucket.rate > reduced
+        assert bucket.rate <= bucket.configured_rate
+
+    def test_defaults_suit_a_free_tier_endpoint(self):
+        """Partir trop haut déclenche une rafale de 429 dès le premier scan."""
+        from app.config import Settings
+
+        settings = Settings()
+        assert settings.rpc_requests_per_second <= 10
+        assert settings.max_concurrent_rpc <= 8
+
+
+class TestValidatorHonesty:
+    """Une panne d'infrastructure ne doit jamais devenir un verdict."""
+
+    async def test_unreachable_rpc_is_not_reported_as_not_pumpfun(self, chain, settings):
+        from app.cache import MemoryCache
+        from app.providers.base import DataQuality, ProviderError
+        from app.providers.registry import ProviderHub
+        from app.pumpfun.validator import ProviderUnavailableError, PumpFunValidator
+        from tests.support.chain import FakeRpc, address
+
+        class DeadRpc(FakeRpc):
+            async def get_account_info(self, address_):
+                raise ProviderError("rpc: circuit is open")
+
+            async def get_signatures(self, address_, **kwargs):
+                raise ProviderError("rpc: circuit is open")
+
+        quality = DataQuality()
+        hub = ProviderHub(
+            settings, cache=MemoryCache(), quality=quality, rpc=DeadRpc(chain, quality=quality)
+        )
+        with pytest.raises(ProviderUnavailableError) as excinfo:
+            await PumpFunValidator(hub).validate(address("some-mint"))
+
+        message = str(excinfo.value)
+        assert "verdict" in message.lower(), "doit dire explicitement que ce n'est pas un verdict"
+        assert "RPC" in message
+
+    async def test_genuinely_absent_curve_is_still_reported_as_not_pumpfun(self, hub):
+        """La panne ne doit pas non plus masquer un vrai « ce n'est pas Pump.fun »."""
+        from app.pumpfun.validator import PumpFunValidator
+        from tests.support.chain import address
+
+        result = await PumpFunValidator(hub).validate(address("plain-spl-token"))
+        assert result.is_pumpfun_token is False
+        assert result.reason
+
+
 class TestLoggingVisibility:
     def test_library_logs_are_routed_to_our_handler(self):
         """Régression : `log_handler=None` rendait les erreurs de discord.py invisibles.

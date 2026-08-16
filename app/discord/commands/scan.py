@@ -17,6 +17,8 @@ from app.export import export_all
 from app.models.enums import ScanDepth
 from app.models.scoring import ScanReport
 from app.orchestrator import NotPumpFunError, ScanContext
+from app.providers.base import ProviderError
+from app.pumpfun.validator import ProviderUnavailableError
 from app.utils.addresses import is_valid_pubkey
 from app.utils.logging import get_logger
 from app.utils.timefmt import human_duration
@@ -125,6 +127,18 @@ class ScanCommands(commands.Cog):
             return
         except ScanTimeout as exc:
             await reporter.fail(str(exc))
+            return
+        except ProviderUnavailableError as exc:
+            await reporter.fail(str(exc))
+            return
+        except ProviderError as exc:
+            # Le RPC a lâché en cours de route : le dire en clair plutôt que
+            # d'afficher un nom de classe interne.
+            await reporter.fail(
+                f"Le fournisseur RPC n'a pas répondu : {exc}\n"
+                "Réessayez dans une minute, ou utilisez `/quickscan` qui sollicite "
+                "beaucoup moins l'endpoint."
+            )
             return
         except Exception as exc:  # noqa: BLE001
             log.exception("scan failed", mint=mint, error=str(exc))

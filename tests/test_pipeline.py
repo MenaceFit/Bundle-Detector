@@ -195,3 +195,43 @@ class TestObservability:
         assert counters["wallets_analyzed"] > 0
         assert counters["transactions_analyzed"] > 0
         assert report.duration_seconds > 0
+
+
+class TestDegradationUnderProviderFailure:
+    """§80 : si un fournisseur tombe, le scan continue avec ce qu'il a."""
+
+    async def test_scan_survives_an_endpoint_dying_mid_run(self, settings):
+        """L'endpoint répond, puis coupe : le rapport doit sortir quand même."""
+        from app.cache import MemoryCache
+        from app.providers.base import DataQuality, ProviderError
+        from app.providers.registry import ProviderHub
+        from tests.support.chain import FakeRpc
+
+        scenario = scenarios.private_bundle()
+
+        class FlakyRpc(FakeRpc):
+            """Coupe tout après les premiers appels, comme un disjoncteur ouvert."""
+
+            budget = 40
+
+            async def get_signatures(self, address_, **kwargs):
+                self.budget -= 1
+                if self.budget < 0:
+                    raise ProviderError("rpc:test circuit is open")
+                return await super().get_signatures(address_, **kwargs)
+
+        quality = DataQuality()
+        hub = ProviderHub(
+            settings,
+            cache=MemoryCache(),
+            quality=quality,
+            rpc=FlakyRpc(scenario.chain, quality=quality),
+        )
+        report, _ = await ScanOrchestrator(hub, settings).scan(
+            scenario.mint, depth=ScanDepth.DEEP
+        )
+
+        # Le rapport existe, et il dit franchement ce qu'il n'a pas pu voir.
+        assert report.token.mint == scenario.mint
+        assert report.risk.confidence.score < 80, "des données manquent : la confiance doit baisser"
+        assert report.risk.confidence.limitations

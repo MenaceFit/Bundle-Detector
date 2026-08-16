@@ -191,6 +191,33 @@ python.org** (pas la version du Microsoft Store), en cochant
 > Ce message parlait à tort d'espace disque dans une version précédente. Il
 > nomme désormais les vraies causes.
 
+### « circuit is open » / « rate limited » / le scan échoue
+
+Votre endpoint RPC est saturé. C'est de loin la cause la plus fréquente
+d'échec d'un scan, et elle n'a rien à voir avec le token analysé.
+
+Le moteur s'y adapte tout seul : à chaque réponse 429, il divise son débit par
+deux, puis réaccélère progressivement quand les réponses repassent au vert. Un
+429 ne coupe plus l'endpoint — c'est de la contre-pression, pas une panne.
+
+Si les échecs persistent :
+
+1. **Utilisez `/quickscan`** plutôt que `/scan` : environ quatre fois moins de
+   requêtes.
+2. **Baissez les débits** dans votre `.env` :
+   ```env
+   RPC_REQUESTS_PER_SECOND=5
+   MAX_CONCURRENT_RPC=4
+   ```
+3. **Passez à un endpoint payant** si vous scannez régulièrement. Les tokens
+   très actifs demandent plusieurs milliers de requêtes.
+
+Les valeurs par défaut (8 et 8) visent une offre gratuite. Sur une offre
+payante, vous pouvez monter à 25 et 16.
+
+> Un scan qui manque de données ne ment pas : la confiance baisse et la section
+> « Limitations » nomme le fournisseur en difficulté.
+
 ### « L'intent MESSAGE CONTENT n'est pas autorisé »
 
 Le bot **démarre quand même** et toutes les commandes slash fonctionnent. Seule
