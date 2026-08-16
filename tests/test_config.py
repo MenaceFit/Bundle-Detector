@@ -202,6 +202,25 @@ class TestLaunchers:
         attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
         assert "*.bat" in attributes and "eol=crlf" in attributes
 
+    def test_gitattributes_catch_all_comes_before_the_specific_rules(self):
+        """Dans .gitattributes, la DERNIÈRE règle correspondante l'emporte.
+
+        Une règle générale placée après `*.bat text eol=crlf` l'annule en
+        silence : le fichier reste correct dans l'arbre de travail, mais un
+        clone neuf ressort un batch en LF — précisément la panne que
+        l'attribut devait empêcher.
+        """
+        lines = [
+            line.strip()
+            for line in (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        catch_all = next(i for i, line in enumerate(lines) if line.startswith("* "))
+        specific = [i for i, line in enumerate(lines) if line.startswith(("*.bat", "*.sh"))]
+        assert all(i > catch_all for i in specific), (
+            "les règles spécifiques doivent suivre la règle générale, sinon elles sont annulées"
+        )
+
     def test_shell_launcher_uses_unix_line_endings(self):
         """Inversement, un .sh en CRLF échoue sur « bad interpreter »."""
         raw = (REPO_ROOT / "start.sh").read_bytes()
