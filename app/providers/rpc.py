@@ -33,7 +33,69 @@ log = get_logger("API")
 #: Max signatures returnable by `getSignaturesForAddress` in one call.
 SIGNATURE_PAGE_SIZE = 1000
 #: Conservative batch size: large batches are the main cause of 413/timeout.
-DEFAULT_BATCH_SIZE = 40
+DEFAULT_BATCH_SIZE = 100
+
+
+#: Fenêtre de regroupement des demandes de transactions, en secondes.
+#
+# Les analyses tournent en parallèle et réclament chacune quelques
+# transactions. Sans regroupement, cinquante wallets produisent cinquante
+# petits lots — donc cinquante requêtes HTTP, alors que le protocole en
+# accepterait une seule de cent. Quinze millisecondes suffisent à laisser les
+# tâches concurrentes se rejoindre, et c'est invisible à l'échelle d'un scan.
+TRANSACTION_COALESCE_WINDOW = 0.015
+
+
+class _TransactionLoader:
+    """Fusionne les demandes de transactions concurrentes en lots partagés.
+
+    Chaque appelant attend sa propre transaction ; sous le capot, tout ce qui
+    a été demandé pendant la fenêtre part en une seule requête groupée.
+    """
+
+    def __init__(self, client: SolanaRpcClient, window: float = TRANSACTION_COALESCE_WINDOW) -> None:
+        self._client = client
+        self._window = window
+        self._pending: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+        self._flush_task: asyncio.Task | None = None
+        self.coalesced_batches = 0
+
+    async def load_many(self, signatures: list[str]) -> dict[str, dict[str, Any] | None]:
+        loop = asyncio.get_running_loop()
+        futures: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+        for signature in signatures:
+            existing = self._pending.get(signature)
+            if existing is None:
+                existing = loop.create_future()
+                self._pending[signature] = existing
+            futures[signature] = existing
+
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = loop.create_task(self._flush_soon())
+
+        results = await asyncio.gather(*futures.values(), return_exceptions=True)
+        return {
+            signature: (None if isinstance(value, BaseException) else value)
+            for signature, value in zip(futures, results, strict=True)
+        }
+
+    async def _flush_soon(self) -> None:
+        await asyncio.sleep(self._window)
+        while self._pending:
+            batch = dict(list(self._pending.items())[: self._client.batch_size])
+            for signature in batch:
+                self._pending.pop(signature, None)
+            self.coalesced_batches += 1
+            try:
+                fetched = await self._client.fetch_transactions_uncoalesced(list(batch))
+            except Exception as exc:  # noqa: BLE001 - relayé à chaque demandeur
+                for future in batch.values():
+                    if not future.done():
+                        future.set_exception(exc)
+                continue
+            for signature, future in batch.items():
+                if not future.done():
+                    future.set_result(fetched.get(signature))
 
 
 class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
@@ -60,6 +122,10 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._breakers = {ep: CircuitBreaker(name=_endpoint_label(ep)) for ep in endpoints}
         self._flight = SingleFlight()
+        #: Cache de signatures par adresse, vivant le temps d'un scan.
+        self._sig_cache: dict[str, list[dict[str, Any]]] = {}
+        self._sig_cache_complete: dict[str, bool] = {}
+        self._loader = _TransactionLoader(self)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0),
             limits=httpx.Limits(max_connections=max_concurrent * 2, max_keepalive_connections=max_concurrent),
@@ -115,6 +181,14 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
             breaker.record_failure()
             health.record(elapsed, False, f"HTTP {response.status_code}")
             raise ProviderError(f"{label}: HTTP {response.status_code}")
+        if response.status_code in (413, 414) and isinstance(payload, list) and self.batch_size > 10:
+            # Lot trop gros pour cet endpoint : on rétrécit durablement plutôt
+            # que d'échouer. Les limites de taille varient d'un fournisseur à
+            # l'autre et ne sont pas annoncées.
+            self.batch_size = max(10, self.batch_size // 2)
+            log.info("batch too large, shrinking", size=self.batch_size)
+            health.record(elapsed, False, f"HTTP {response.status_code} (batch too large)")
+            raise ProviderError(f"{label}: batch too large, retrying smaller")
         if response.status_code >= 400:
             breaker.record_failure()
             health.record(elapsed, False, f"HTTP {response.status_code}")
@@ -250,16 +324,96 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
             for addr, res in zip(addresses, results, strict=False)
         }
 
+    # ------------------------------------------------------------------
+    # Cache de signatures par adresse
+    #
+    # Quatre étapes différentes veulent l'historique d'un même wallet : l'âge,
+    # le financement pré-achat, la remontée de chaîne et l'historique Pump.fun.
+    # Les laisser interroger chacune de leur côté multipliait par quatre le
+    # coût dominant d'un scan. On récupère donc une fois, largement, et tout le
+    # monde se sert dans la même liste.
+    #
+    # C'est sûr : une liste de signatures ne grandit que par la tête, et à
+    # l'échelle d'un scan (quelques secondes) une transaction survenue entre
+    # deux étapes n'aurait de toute façon aucune influence sur l'analyse.
+    # ------------------------------------------------------------------
+    def _cached_signatures(
+        self, address: str, *, limit: int, before: str | None
+    ) -> list[dict[str, Any]] | None:
+        entries = self._sig_cache.get(address)
+        if entries is None:
+            return None
+        complete = self._sig_cache_complete.get(address, False)
+
+        if before is None:
+            if len(entries) >= limit or complete:
+                return entries[:limit]
+            return None
+
+        for index, entry in enumerate(entries):
+            if entry.get("signature") == before:
+                tail = entries[index + 1 :]
+                # Assez de matière, ou bien on sait qu'il n'y a rien après.
+                if len(tail) >= limit or complete:
+                    return tail[:limit]
+                return None
+        return None
+
+    def remember_signatures(self, address: str, entries: list[dict[str, Any]], *, complete: bool) -> None:
+        known = self._sig_cache.get(address)
+        if known is None or len(entries) > len(known):
+            self._sig_cache[address] = entries
+            self._sig_cache_complete[address] = complete
+        elif complete:
+            self._sig_cache_complete[address] = True
+
+    async def prefetch_signatures(self, addresses: list[str], *, limit: int = 200) -> None:
+        """Remplit le cache pour plusieurs adresses, en parallèle.
+
+        Appelé une fois par scan sur l'ensemble des acheteurs : les étapes
+        suivantes n'émettent alors plus aucune requête de signatures.
+        """
+        targets = [a for a in dict.fromkeys(addresses) if a and a not in self._sig_cache]
+        if not targets:
+            return
+        page = min(limit, SIGNATURE_PAGE_SIZE)
+        options = {"limit": page, "commitment": "confirmed"}
+        # Groupé : `getSignaturesForAddress` s'empile dans un lot JSON-RPC comme
+        # n'importe quelle autre méthode. Cinquante wallets tiennent alors dans
+        # une requête HTTP au lieu de cinquante.
+        try:
+            results = await self._batch_call(
+                "getSignaturesForAddress", [[address, options] for address in targets]
+            )
+        except ProviderError as exc:
+            log.debug("signature prefetch failed", error=str(exc))
+            return
+        for address, result in zip(targets, results, strict=False):
+            if result is None:
+                continue
+            entries = list(result)
+            self.remember_signatures(address, entries, complete=len(entries) < page)
+
     async def get_signatures(
         self, address: str, *, limit: int = 1000, before: str | None = None, until: str | None = None
     ) -> list[dict[str, Any]]:
+        if until is None:
+            cached = self._cached_signatures(address, limit=limit, before=before)
+            if cached is not None:
+                self.quality.cache_hits += 1
+                return cached
+
         options: dict[str, Any] = {"limit": min(limit, SIGNATURE_PAGE_SIZE), "commitment": "confirmed"}
         if before:
             options["before"] = before
         if until:
             options["until"] = until
         result = await self._call("getSignaturesForAddress", [address, options])
-        return list(result or [])
+        entries = list(result or [])
+
+        if before is None and until is None:
+            self.remember_signatures(address, entries, complete=len(entries) < min(limit, SIGNATURE_PAGE_SIZE))
+        return entries
 
     async def get_signatures_paged(
         self,
@@ -332,7 +486,12 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
     # TransactionProvider
     # ------------------------------------------------------------------
     async def get_transactions(self, signatures: list[str]) -> dict[str, dict[str, Any] | None]:
-        """Fetch many transactions, using the cache then a JSON-RPC batch."""
+        """Récupère plusieurs transactions : cache, puis lot mutualisé.
+
+        Les demandes émises par des analyses concurrentes sont fusionnées (voir
+        :class:`_TransactionLoader`) : c'est ce qui évite qu'un scan de
+        cinquante wallets produise cinquante petits lots.
+        """
         out: dict[str, dict[str, Any] | None] = {}
         missing: list[str] = []
         if self.cache is not None:
@@ -347,14 +506,22 @@ class SolanaRpcClient(SolanaProvider, TransactionProvider, HolderProvider):
         else:
             missing = list(signatures)
 
-        options = {"encoding": "jsonParsed", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}
-        results = await self._batch_call("getTransaction", [[sig, options] for sig in missing])
-        for sig, tx in zip(missing, results, strict=False):
-            out[sig] = tx
-            if tx is not None and self.cache is not None:
-                await self.cache.set(f"rpc:tx:{sig}", tx)
+        if missing:
+            fetched = await self._loader.load_many(missing)
+            for sig, tx in fetched.items():
+                out[sig] = tx
+                if tx is not None and self.cache is not None:
+                    await self.cache.set(f"rpc:tx:{sig}", tx)
         self.quality.transactions_analyzed += sum(1 for v in out.values() if v)
         return out
+
+    async def fetch_transactions_uncoalesced(
+        self, signatures: list[str]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Le lot effectif, appelé uniquement par le regroupeur."""
+        options = {"encoding": "jsonParsed", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}
+        results = await self._batch_call("getTransaction", [[sig, options] for sig in signatures])
+        return dict(zip(signatures, results, strict=False))
 
     # ------------------------------------------------------------------
     # HolderProvider

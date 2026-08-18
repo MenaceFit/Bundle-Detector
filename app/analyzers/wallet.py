@@ -24,9 +24,15 @@ from app.utils.logging import get_logger
 
 log = get_logger("WALLET")
 
-#: Signature pages walked per wallet when measuring age. Three pages (3 000
-#: transactions) is far more than any genuinely fresh wallet can have.
-AGE_MAX_PAGES = 3
+#: Signatures lues par wallet pour mesurer son âge.
+#
+# Une seule page suffit, et c'est un point de logique, pas un compromis : si la
+# page revient pleine, le wallet a au moins 1 000 transactions — il n'est donc
+# certainement pas « frais », et c'est la seule chose que la mesure sert à
+# établir. Payer deux pages de plus pour dater précisément un wallet dont on
+# sait déjà qu'il est ancien serait du gaspillage pur, multiplié par le nombre
+# d'acheteurs analysés.
+AGE_PAGE_SIZE = 1000
 
 
 @dataclass
@@ -140,29 +146,18 @@ class WalletAnalyzer:
         return out
 
     async def _age_of(self, address: str) -> _AgeResult:
-        collected = 0
-        before: str | None = None
-        oldest: dict | None = None
-        bounded = True
-        for _ in range(AGE_MAX_PAGES):
-            page = await self.hub.rpc.get_signatures(address, limit=1000, before=before)
-            if not page:
-                bounded = False
-                break
-            collected += len(page)
-            oldest = page[-1]
-            if len(page) < 1000:
-                bounded = False
-                break
-            before = oldest.get("signature")
-            if not before:
-                bounded = False
-                break
+        page = await self.hub.rpc.get_signatures(address, limit=AGE_PAGE_SIZE)
+        if not page:
+            return _AgeResult(address=address, first_seen=None, bounded=False, signature_count=0)
+        # Page pleine = au moins AGE_PAGE_SIZE transactions : l'âge mesuré est
+        # une borne inférieure, ce qui suffit puisque le wallet est alors
+        # forcément ancien.
+        bounded = len(page) >= AGE_PAGE_SIZE
         return _AgeResult(
             address=address,
-            first_seen=(oldest or {}).get("blockTime"),
+            first_seen=page[-1].get("blockTime"),
             bounded=bounded,
-            signature_count=collected,
+            signature_count=len(page),
         )
 
 
