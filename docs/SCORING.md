@@ -26,6 +26,7 @@ Signals are grouped into **families** that measure genuinely different things:
 | Family | Signals | Question it answers |
 |---|---|---|
 | `funding_topology` | common funder, common intermediary | Who paid for these wallets? |
+| `execution` | shared transaction signer | Who *built and signed* the buys? |
 | `funding_pattern` | funding amount similarity, funding synchronisation | Did the payments look alike? |
 | `trade_pattern` | buy amount similarity, buy synchronisation | Did the buys look alike? |
 | `wallet_provenance` | wallet age similarity | What are these wallets? |
@@ -44,11 +45,51 @@ is:
 | 2 | 55 |
 | 3+ | none |
 
+There is exactly one escalation in the other direction, described under
+[the atomic floor](#the-atomic-floor), and it is gated on this rule already
+being satisfied.
+
 This is the direct implementation of §17/§46 of the specification: *five
 wallets funded with about 5 SOL each is not a bundle*, and the engine is
 structurally incapable of calling it one until independent evidence joins it.
 The test `test_matching_amounts_alone_cannot_reach_high_risk` pins this
 behaviour.
+
+## The execution family
+
+`execution` is the newest family and the strongest one, because it is the only
+one whose innocent explanation is thin.
+
+On Solana a transaction is valid only once **every account that spends has
+signed it**. A buyer necessarily signs their own purchase. So:
+
+* If the **fee payer** of a buy is a *different* wallet, two keys signed that
+  transaction. That is not "someone sent me SOL" — it is a second party
+  participating in the purchase itself.
+* If several **distinct buyers appear inside one transaction**, every one of
+  their signatures was collected before submission. One party assembled them.
+
+Both are measured by `app.analyzers.buyers.execution_links`, from the parsed
+transactions the engine already fetched — no extra RPC calls. A fee payer who
+sponsored only *one* buyer is discarded: it links nothing to nothing.
+
+### The atomic floor
+
+Atomicity is treated differently from every other signal. When a single
+transaction contains at least `atomic_execution_share` (50%) of a cluster's
+members, and the independence rule is *already* satisfied, the score is raised
+to `atomic_execution_floor` (78) and the reason is printed in the breakdown.
+
+The gate matters as much as the floor. Atomic execution alone stays capped at
+35 like any other lone family — the escalation only lifts a case that several
+independent families already support. It can raise a score, never lower one,
+and it never overrides a ceiling. `TestAtomicExecutionFloor` pins all four
+properties, including `test_atomicity_alone_cannot_defeat_the_independence_rule`.
+
+Both findings are surfaced as traceable evidence (`ATOMIC_EXECUTION`,
+`SHARED_FEE_PAYER`) carrying the signatures that establish them, and each states
+its own limit: shared execution proves a single *operator*, not a single
+*owner* — fee sponsorship is sold as a service.
 
 ## Damping
 

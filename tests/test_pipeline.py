@@ -121,6 +121,24 @@ class TestScenarioSeparation:
         assert cluster.common_funders
         assert any(e.code == "COMMON_FUNDER" for e in report.evidence)
 
+    async def test_atomic_execution_is_the_decisive_case(self, settings):
+        """§21 — plusieurs acheteurs dans une seule transaction."""
+        report, _ = await run_scenario(scenarios.atomic_bundle(), settings)
+        assert report.risk.classification.value == "BUNDLE-LIKE PATTERN"
+        assert report.risk.bundle.floor_applied is not None
+        atomic = [e for e in report.evidence if e.code == "ATOMIC_EXECUTION"]
+        assert atomic, "the atomic group must be surfaced as evidence"
+        # Traçable jusqu'à la transaction, et honnête sur ce qu'elle ne prouve pas.
+        assert atomic[0].signatures and atomic[0].caveat
+        assert len(atomic[0].wallets) == 5
+
+    async def test_sponsored_fees_are_reported_even_without_atomicity(self, settings):
+        report, _ = await run_scenario(scenarios.private_bundle(), settings)
+        sponsored = [e for e in report.evidence if e.code == "SHARED_FEE_PAYER"]
+        assert sponsored, "a shared fee payer is a signature-level link and must be shown"
+        assert sponsored[0].signatures
+        assert report.risk.bundle.floor_applied is None
+
     async def test_independent_buyers_are_not_a_bundle(self, settings):
         report, _ = await run_scenario(scenarios.independent_buyers(), settings)
         assert report.risk.bundle.score < 45, report.risk.bundle.model_dump()

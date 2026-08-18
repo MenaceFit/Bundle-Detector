@@ -15,6 +15,8 @@ class ClusterSignals(BaseModel):
 
     common_funder: float = 0.0
     common_intermediary: float = 0.0
+    #: Payeur de frais partagé, ou achats réunis dans une même transaction.
+    shared_signer: float = 0.0
     funding_amount_similarity: float = 0.0
     funding_timing_similarity: float = 0.0
     buy_amount_similarity: float = 0.0

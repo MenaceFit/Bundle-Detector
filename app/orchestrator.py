@@ -20,6 +20,7 @@ is marked missing, which lowers the confidence score.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from app.analyzers import holders as holder_analysis
 from app.analyzers.buyers import (
     BuyerAnalyzer,
     LaunchTape,
+    execution_links,
     purchase_distribution,
     slot_analysis,
     timeline_counts,
@@ -165,6 +167,7 @@ class ScanContext:
     sells: SellAnalysis | None = None
     evidence: list[Evidence] = field(default_factory=list)
     mayhem: mayhem_module.MayhemSeparation | None = None
+    execution: Any | None = None
 
 
 class ScanOrchestrator:
@@ -216,12 +219,6 @@ class ScanOrchestrator:
                     trade.seconds_after_launch = max(0.0, float(trade.block_time - profile.creation_time))
         apply_graduation_events(profile.graduation, tape.graduation_events)
 
-        raw_holders = await self.hub.get_token_holders(mint, limit=plan.holder_limit)
-        infrastructure = {a for a in (profile.bonding_curve, profile.graduation.pumpswap_pool) if a}
-        holder_view = holder_analysis.analyze_holders(
-            raw_holders, self.classifier, infrastructure_addresses=infrastructure
-        )
-
         buyer_addresses = tape.first_buyers(plan.buyer_limit)
         trades_by_wallet = tape.trades_by_wallet()
         first_buys = {
@@ -229,6 +226,22 @@ class ScanOrchestrator:
             for wallet in buyer_addresses
             if any(t.wallet == wallet for t in tape.buys)
         }
+
+        # Les holders ne dépendent d'aucun acheteur : les charger en parallèle du
+        # préchargement des signatures fait disparaître son coût du chemin
+        # critique. Le préchargement, lui, sert ensuite l'âge, le financement et
+        # l'historique — qui interrogeaient chacun le même wallet séparément.
+        infrastructure = {a for a in (profile.bonding_curve, profile.graduation.pumpswap_pool) if a}
+        holders_task = asyncio.create_task(self.hub.get_token_holders(mint, limit=plan.holder_limit))
+        prefetch_task = asyncio.create_task(
+            self.hub.rpc.prefetch_signatures(
+                buyer_addresses, limit=max(plan.history_sample, 200)
+            )
+        )
+        raw_holders, _ = await asyncio.gather(holders_task, prefetch_task, return_exceptions=False)
+        holder_view = holder_analysis.analyze_holders(
+            raw_holders, self.classifier, infrastructure_addresses=infrastructure
+        )
         await step("buyers")
 
         # 9-12: funding, intermediaries, wallet age, balances -----------------
@@ -330,6 +343,8 @@ class ScanOrchestrator:
 
         await step("clusters", "running")
         cluster_engine = ClusterEngine(self.settings.scoring)
+        execution = execution_links(tape, first_n=plan.buyer_limit)
+        context.execution = execution
         clusters = cluster_engine.detect(
             graph=graph,
             profiles=profiles,
@@ -337,6 +352,7 @@ class ScanOrchestrator:
             history=history,
             creator=creator_profile,
             launch_time=profile.creation_time,
+            execution=execution,
         )
         context.clusters = clusters
         self.hub.quality.clusters_detected = len(clusters)
@@ -455,6 +471,7 @@ class ScanOrchestrator:
             creator=context.creator,
             sells=sells,
             mayhem=profile.mayhem,
+            execution=context.execution,
         )
         context.evidence = evidence
 
@@ -545,6 +562,10 @@ class ScanOrchestrator:
         if context.mayhem and context.tape and context.tape.trades:
             mayhem_share = context.mayhem.info.flagged_trades / len(context.tape.trades)
 
+        atomic_size, atomic_share = (0, 0.0)
+        if context.execution is not None:
+            atomic_size, atomic_share = context.execution.atomic_stats_for(set(members))
+
         return BundleContext(
             mayhem_share=mayhem_share,
             fresh_share=len(fresh) / len(members) if members else 0.0,
@@ -552,6 +573,8 @@ class ScanOrchestrator:
             sell_coordination=sells.coordination,
             funder_is_infrastructure=funder_is_infra,
             infrastructure_reason=infra_reason,
+            atomic_group_size=atomic_size,
+            atomic_share=atomic_share,
         )
 
 

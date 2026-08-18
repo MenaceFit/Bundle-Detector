@@ -49,6 +49,9 @@ class ScoreBreakdown(BaseModel):
     independent_signals: int = 0
     #: Ceiling applied because too few independent signals fired, if any.
     ceiling_applied: float | None = None
+    #: Floor applied because execution was provably atomic (§21), if any.
+    floor_applied: float | None = None
+    floor_reason: str | None = None
 
     def top_contributions(self, n: int = 8) -> list[ScoreContribution]:
         return sorted(

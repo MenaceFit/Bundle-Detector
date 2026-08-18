@@ -344,6 +344,7 @@ class SyntheticChain:
         quote_mint: str = DEFAULT_PUBKEY,
         real_token_reserves: int | None = None,
         wallet_balance: float = 5.0,
+        fee_payer: str | None = None,
     ) -> str:
         return self._trade(
             mint=mint,
@@ -358,6 +359,7 @@ class SyntheticChain:
             quote_mint=quote_mint,
             real_token_reserves=real_token_reserves,
             wallet_balance=wallet_balance,
+            fee_payer=fee_payer,
         )
 
     def sell(
@@ -397,6 +399,7 @@ class SyntheticChain:
         quote_mint: str = DEFAULT_PUBKEY,
         real_token_reserves: int | None = None,
         wallet_balance: float = 5.0,
+        fee_payer: str | None = None,
     ) -> str:
         lamports = int(sol * LAMPORTS_PER_SOL)
         token_amount = int((tokens if tokens is not None else sol * 1_000_000) * 1_000_000)
@@ -447,14 +450,23 @@ class SyntheticChain:
 
         wallet_lamports = int(wallet_balance * LAMPORTS_PER_SOL)
         delta = -lamports if is_buy else lamports
+        # Le payeur de frais est, par construction Solana, le premier compte.
+        if fee_payer and fee_payer != wallet:
+            accounts = [fee_payer, wallet, mint, curve, PUMP_FUN_PROGRAM_ID, SYSTEM_PROGRAM_ID]
+            pre = [5 * LAMPORTS_PER_SOL, wallet_lamports, 0, 1_000_000, 1, 1]
+            post = [5 * LAMPORTS_PER_SOL - 5000, wallet_lamports + delta, 0, 1_000_000 - delta, 1, 1]
+        else:
+            accounts = [wallet, mint, curve, PUMP_FUN_PROGRAM_ID, SYSTEM_PROGRAM_ID]
+            pre = [wallet_lamports, 0, 1_000_000, 1, 1]
+            post = [wallet_lamports + delta - 5000, 0, 1_000_000 - delta, 1, 1]
         self._record(
             _Tx(
                 signature=sig,
                 slot=used_slot,
                 block_time=block_time,
-                accounts=[wallet, mint, curve, PUMP_FUN_PROGRAM_ID, SYSTEM_PROGRAM_ID],
-                pre=[wallet_lamports, 0, 1_000_000, 1, 1],
-                post=[wallet_lamports + delta - 5000, 0, 1_000_000 - delta, 1, 1],
+                accounts=accounts,
+                pre=pre,
+                post=post,
                 instruction_data=[
                     (
                         PUMP_FUN_PROGRAM_ID,
@@ -462,6 +474,92 @@ class SyntheticChain:
                     )
                 ],
                 inner=[(PUMP_FUN_PROGRAM_ID, b58_data(payload))],
+            )
+        )
+        return sig
+
+    def atomic_buy(
+        self,
+        *,
+        mint: str,
+        wallets: list[str],
+        sol: float,
+        block_time: int,
+        creator: str,
+        fee_payer: str,
+        slot: int | None = None,
+    ) -> str:
+        """Une *seule* transaction faisant acheter plusieurs wallets.
+
+        C'est la forme la plus dure à expliquer autrement que par un opérateur
+        unique : l'atomicité impose que toutes les signatures soient réunies au
+        moment de la construction de la transaction.
+        """
+        lamports = int(sol * LAMPORTS_PER_SOL)
+        token_amount = int(sol * 1_000_000 * 1_000_000)
+        curve = bonding_curve_pda(mint)
+        sig = signature(f"atomic-{mint}-{block_time}-{len(wallets)}")
+        used_slot = slot if slot is not None else self.next_slot()
+
+        inner: list[tuple[str, str]] = []
+        for index, wallet in enumerate(wallets):
+            payload = _trade_event_payload(
+                {
+                    "mint": mint,
+                    "sol_amount": lamports,
+                    "token_amount": token_amount,
+                    "is_buy": True,
+                    "user": wallet,
+                    "timestamp": block_time,
+                    "virtual_sol_reserves": INITIAL_VIRTUAL_SOL_RESERVES + lamports * (index + 1),
+                    "virtual_token_reserves": INITIAL_VIRTUAL_TOKEN_RESERVES - token_amount * (index + 1),
+                    "real_sol_reserves": lamports * (index + 1),
+                    "real_token_reserves": INITIAL_REAL_TOKEN_RESERVES - token_amount * (index + 1),
+                    "fee_recipient": address("pump-fee-recipient"),
+                    "fee_basis_points": 100,
+                    "fee": lamports // 100,
+                    "creator": creator,
+                    "creator_fee_basis_points": 5,
+                    "creator_fee": lamports // 2000,
+                    "track_volume": True,
+                    "total_unclaimed_tokens": 0,
+                    "total_claimed_tokens": 0,
+                    "current_sol_volume": lamports,
+                    "last_update_timestamp": block_time,
+                    "ix_name": "buy",
+                    "mayhem_mode": False,
+                    "cashback_fee_basis_points": 0,
+                    "cashback": 0,
+                    "buyback_fee_basis_points": 0,
+                    "buyback_fee": 0,
+                },
+                tail={
+                    "quote_mint": DEFAULT_PUBKEY,
+                    "quote_amount": lamports,
+                    "virtual_quote_reserves": INITIAL_VIRTUAL_SOL_RESERVES + lamports,
+                    "real_quote_reserves": lamports,
+                },
+            )
+            inner.append((PUMP_FUN_PROGRAM_ID, b58_data(payload)))
+
+        accounts = [fee_payer, *wallets, mint, curve, PUMP_FUN_PROGRAM_ID, SYSTEM_PROGRAM_ID]
+        balance = 20 * LAMPORTS_PER_SOL
+        pre = [balance] + [3 * LAMPORTS_PER_SOL] * len(wallets) + [0, 1_000_000, 1, 1]
+        post = (
+            [balance - 5000]
+            + [3 * LAMPORTS_PER_SOL - lamports] * len(wallets)
+            + [0, 1_000_000 + lamports * len(wallets), 1, 1]
+        )
+        self._record(
+            _Tx(
+                signature=sig,
+                slot=used_slot,
+                block_time=block_time,
+                accounts=accounts,
+                pre=pre,
+                post=post,
+                instruction_data=[(PUMP_FUN_PROGRAM_ID, b58_data(PUMP_INSTRUCTIONS["buy"]))],
+                inner=inner,
             )
         )
         return sig
@@ -528,6 +626,14 @@ class FakeRpc:
             else:
                 entries = []
         return entries[:limit]
+
+    async def prefetch_signatures(self, addresses: list[str], *, limit: int = 200) -> None:
+        """Sans effet ici : la chaîne en mémoire répond déjà instantanément.
+
+        Le vrai gain du préchargement se mesure au niveau HTTP, avec
+        `tests.support.rpc_server`, qui fait tourner le client réel.
+        """
+        self._count("prefetchSignatures")
 
     async def get_signatures_paged(
         self,

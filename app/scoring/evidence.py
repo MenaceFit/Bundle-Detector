@@ -8,6 +8,7 @@ signature is still allowed, but it says so, and it is weighted lower.
 
 from __future__ import annotations
 
+from app.analyzers.buyers import ExecutionLinks
 from app.analyzers.entities import EntityClassifier
 from app.analyzers.funding import FundingAnalysis
 from app.analyzers.history import HistoryAnalysis
@@ -33,11 +34,14 @@ def build(
     creator: CreatorProfile | None = None,
     sells: SellAnalysis | None = None,
     mayhem: MayhemInfo | None = None,
+    execution: ExecutionLinks | None = None,
 ) -> list[Evidence]:
     members = cluster.members if cluster else list(profiles)
     member_set = set(members)
     evidence: list[Evidence] = []
 
+    if execution is not None:
+        evidence.extend(_execution_evidence(member_set, execution))
     evidence.extend(_funding_evidence(members, member_set, funding, graph, classifier))
     evidence.extend(_timing_evidence(members, profiles, funding))
     evidence.extend(_amount_evidence(members, profiles))
@@ -56,6 +60,65 @@ def build(
 
 
 # ---------------------------------------------------------------------------
+def _execution_evidence(member_set: set[str], execution: ExecutionLinks) -> list[Evidence]:
+    """Liens établis par la construction des transactions d'achat (§21).
+
+    C'est la preuve la plus directe du moteur, et elle est intégralement
+    traçable : chaque constat pointe vers les signatures qui l'établissent.
+    """
+    findings: list[Evidence] = []
+
+    for signature, wallets in sorted(execution.atomic_groups.items()):
+        shared = sorted(set(wallets) & member_set)
+        if len(shared) < 2:
+            continue
+        findings.append(
+            Evidence(
+                code="ATOMIC_EXECUTION",
+                title=f"{len(shared)} buyers inside a single transaction",
+                detail=(
+                    f"{', '.join(shorten(w) for w in shared[:6])}"
+                    f"{'…' if len(shared) > 6 else ''} bought in one and the same transaction. "
+                    "A Solana transaction only executes once every spending account has signed "
+                    "it, so all of these signatures were assembled together by one party."
+                ),
+                wallets=shared,
+                signatures=[signature],
+                strength=1.0,
+                caveat=(
+                    "Proves single-operator execution, not ownership: a service can sign on "
+                    "behalf of clients who each authorised their own wallet."
+                ),
+            )
+        )
+
+    for payer, wallets in sorted(execution.sponsors.items()):
+        shared = sorted(set(wallets) & member_set)
+        if len(shared) < 2:
+            continue
+        findings.append(
+            Evidence(
+                code="SHARED_FEE_PAYER",
+                title=f"{shorten(payer)} paid the fees of {len(shared)} buyers",
+                detail=(
+                    f"{shorten(payer)} is the fee payer of the buy transactions of "
+                    f"{', '.join(shorten(w) for w in shared[:6])}"
+                    f"{'…' if len(shared) > 6 else ''}. Unlike a transfer, this requires that "
+                    "wallet's signature on someone else's purchase."
+                ),
+                wallets=shared,
+                signatures=execution.signatures.get(payer, [])[:10],
+                strength=0.85,
+                caveat=(
+                    "Fee sponsorship is also offered as a paid service; it shows a shared "
+                    "operator, not necessarily a shared owner."
+                ),
+            )
+        )
+
+    return findings
+
+
 def _funding_evidence(
     members: list[str],
     member_set: set[str],

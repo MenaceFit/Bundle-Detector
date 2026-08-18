@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.analyzers.buyers import BuyerAnalyzer, slot_analysis, timeline_counts, window_counts
+from app.analyzers.buyers import (
+    BuyerAnalyzer,
+    execution_links,
+    slot_analysis,
+    timeline_counts,
+    window_counts,
+)
 from app.analyzers.entities import EntityClassifier, describe_registry, lookup
 from app.analyzers.funding import FundingAnalyzer
 from app.analyzers.holders import analyze_holders
@@ -150,6 +156,121 @@ class TestBuyerEngine:
         assert analysis["wallets_sharing_a_slot"] == 4
         assert analysis["distinct_slots"] == 1
         assert "independent snipers" in analysis["caveat"]
+
+
+class TestExecutionLinks:
+    """§21 — liens déduits de la construction des transactions."""
+
+    async def _tape(self, hub, mint):
+        validation = await PumpFunValidator(hub).validate(mint)
+        profile = await build_token_profile(hub, validation)
+        return await BuyerAnalyzer(hub).build_tape(profile, buyer_limit=50)
+
+    async def test_self_paid_buyers_produce_no_link(self, hub, chain):
+        """Le cas normal : chacun paie ses propres frais. Aucun signal."""
+        mint, creator = address("exec-solo-mint"), address("exec-solo-creator")
+        chain.create_coin(mint=mint, creator=creator, block_time=LAUNCH_TIME)
+        wallets = [address(f"exec-solo-{i}") for i in range(4)]
+        for i, wallet in enumerate(wallets):
+            chain.buy(
+                mint=mint, wallet=wallet, sol=1.0, block_time=LAUNCH_TIME + i, creator=creator
+            )
+
+        links = execution_links(await self._tape(hub, mint))
+        assert links.sponsors == {}
+        assert links.atomic_groups == {}
+        assert links.strength_for(set(wallets)) == 0.0
+
+    async def test_a_single_sponsored_wallet_is_not_a_link(self, hub, chain):
+        """Un payeur pour un seul acheteur n'établit aucune relation entre wallets."""
+        mint, creator = address("exec-one-mint"), address("exec-one-creator")
+        payer = address("exec-one-payer")
+        chain.create_coin(mint=mint, creator=creator, block_time=LAUNCH_TIME)
+        sponsored, own = address("exec-one-a"), address("exec-one-b")
+        chain.buy(
+            mint=mint,
+            wallet=sponsored,
+            sol=1.0,
+            block_time=LAUNCH_TIME + 1,
+            creator=creator,
+            fee_payer=payer,
+        )
+        chain.buy(mint=mint, wallet=own, sol=1.0, block_time=LAUNCH_TIME + 2, creator=creator)
+
+        links = execution_links(await self._tape(hub, mint))
+        assert links.sponsors == {}
+
+    async def test_shared_fee_payer_links_the_wallets_it_paid_for(self, hub, chain):
+        mint, creator = address("exec-spon-mint"), address("exec-spon-creator")
+        payer = address("exec-spon-payer")
+        chain.create_coin(mint=mint, creator=creator, block_time=LAUNCH_TIME)
+        wallets = [address(f"exec-spon-{i}") for i in range(3)]
+        for i, wallet in enumerate(wallets):
+            chain.buy(
+                mint=mint,
+                wallet=wallet,
+                sol=1.0,
+                block_time=LAUNCH_TIME + i,
+                creator=creator,
+                fee_payer=payer,
+            )
+
+        links = execution_links(await self._tape(hub, mint))
+        assert sorted(links.sponsors[payer]) == sorted(wallets)
+        assert links.sponsored_wallets == set(wallets)
+        assert links.strength_for(set(wallets)) == pytest.approx(1.0)
+        # Chaque lien est traçable jusqu'à ses signatures (§60).
+        assert len(links.signatures[payer]) == 3
+
+    async def test_atomic_group_is_detected_and_weighted_above_sponsorship(self, hub, chain):
+        mint, creator = address("exec-atom-mint"), address("exec-atom-creator")
+        payer = address("exec-atom-payer")
+        chain.create_coin(mint=mint, creator=creator, block_time=LAUNCH_TIME)
+        wallets = [address(f"exec-atom-{i}") for i in range(4)]
+        signature = chain.atomic_buy(
+            mint=mint,
+            wallets=wallets,
+            sol=1.0,
+            block_time=LAUNCH_TIME + 1,
+            creator=creator,
+            fee_payer=payer,
+        )
+
+        links = execution_links(await self._tape(hub, mint))
+        assert links.atomic_groups[signature] == sorted(wallets)
+        assert links.atomically_grouped_wallets == set(wallets)
+
+        size, share = links.atomic_stats_for(set(wallets))
+        assert size == 4
+        assert share == pytest.approx(1.0)
+
+        # Deux membres sur quatre : l'atomicité pèse plus qu'un simple sponsor.
+        half = set(wallets[:2])
+        assert links.strength_for(half | {address("exec-atom-outsider"), address("x")}) > 0.5
+
+    async def test_partial_overlap_is_measured_not_rounded_up(self, hub, chain):
+        mint, creator = address("exec-part-mint"), address("exec-part-creator")
+        payer = address("exec-part-payer")
+        chain.create_coin(mint=mint, creator=creator, block_time=LAUNCH_TIME)
+        grouped = [address(f"exec-part-{i}") for i in range(2)]
+        chain.atomic_buy(
+            mint=mint,
+            wallets=grouped,
+            sol=1.0,
+            block_time=LAUNCH_TIME + 1,
+            creator=creator,
+            fee_payer=payer,
+        )
+        others = [address(f"exec-part-solo-{i}") for i in range(6)]
+        for i, wallet in enumerate(others):
+            chain.buy(
+                mint=mint, wallet=wallet, sol=1.0, block_time=LAUNCH_TIME + 5 + i, creator=creator
+            )
+
+        links = execution_links(await self._tape(hub, mint))
+        size, share = links.atomic_stats_for(set(grouped) | set(others))
+        assert size == 2
+        assert share == pytest.approx(0.25)
 
 
 class TestFundingTracer:

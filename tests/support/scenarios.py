@@ -67,8 +67,15 @@ def independent_buyers(count: int = 20) -> Scenario:
     return Scenario("independent", chain, mint, creator, buyers, "NORMAL EARLY BUYERS")
 
 
-def private_bundle(count: int = 8) -> Scenario:
-    """Case 2 — one private funder, fresh wallets, matched sizes, synchronised entries."""
+def private_bundle(count: int = 8, *, sponsor_fees: bool = True) -> Scenario:
+    """Case 2 — un funder privé, wallets frais, montants et timings alignés.
+
+    ``sponsor_fees`` reproduit le comportement réel d'un bundler : c'est lui qui
+    paie les frais des transactions d'achat, donc son adresse est le payeur de
+    frais de wallets qui ne sont pas le sien. Ce détail est le signal le plus
+    fort du moteur — il exige une signature, là où un funder commun ne prouve
+    qu'un virement.
+    """
     chain = SyntheticChain()
     mint, creator = address("bundle-mint"), address("bundle-creator")
     funder = address("bundle-funder")
@@ -93,10 +100,56 @@ def private_bundle(count: int = 8) -> Scenario:
             sol=round(1.0 + rng.uniform(-0.01, 0.01), 4),
             block_time=LAUNCH_TIME + 3 + i,
             creator=creator,
+            fee_payer=funder if sponsor_fees else None,
         )
         buyers.append(wallet)
     chain.set_holders(mint, [(w, 5_000_000) for w in buyers])
     return Scenario("private_bundle", chain, mint, creator, buyers, "BUNDLE-LIKE PATTERN")
+
+
+def bundle_without_shared_signer(count: int = 8) -> Scenario:
+    """Case 9 — même schéma, mais chaque wallet signe et paie lui-même.
+
+    Cas volontairement plus faible : le lien de financement est là, la preuve
+    d'exécution non. Il doit donc être signalé comme une coordination possible
+    sans atteindre la bande « bundle » — c'est exactement la nuance que le
+    moteur doit savoir rendre.
+    """
+    scenario = private_bundle(count, sponsor_fees=False)
+    scenario.name = "bundle_no_signer"
+    scenario.expected = "POSSIBLE COORDINATION"
+    return scenario
+
+
+def atomic_bundle(count: int = 5) -> Scenario:
+    """Case 10 — plusieurs acheteurs réunis dans une seule transaction.
+
+    L'atomicité ne laisse aucune place au hasard : une transaction unique qui
+    fait acheter cinq wallets différents est forcément construite par un seul
+    opérateur.
+    """
+    chain = SyntheticChain()
+    mint, creator = address("atomic-mint"), address("atomic-creator")
+    operator = address("atomic-operator")
+    _age_wallet(chain, creator, days_old=60)
+    chain.create_coin(mint=mint, creator=creator, symbol="ATOM", block_time=LAUNCH_TIME)
+
+    buyers: list[str] = []
+    for i in range(count):
+        wallet = address(f"atomic-buyer-{i}")
+        chain.fund(source=operator, recipient=wallet, sol=3.0, block_time=LAUNCH_TIME - 20 + i)
+        buyers.append(wallet)
+    # Une seule transaction, cinq acheteurs : l'atomicite est la preuve.
+    chain.atomic_buy(
+        mint=mint,
+        wallets=buyers,
+        sol=1.0,
+        block_time=LAUNCH_TIME + 2,
+        creator=creator,
+        fee_payer=operator,
+    )
+    chain.set_holders(mint, [(w, 6_000_000) for w in buyers])
+    return Scenario("atomic_bundle", chain, mint, creator, buyers, "BUNDLE-LIKE PATTERN")
 
 
 def cex_funded(count: int = 12) -> Scenario:
@@ -289,6 +342,8 @@ def graduated_coin() -> Scenario:
 ALL_SCENARIOS = {
     "independent": independent_buyers,
     "private_bundle": private_bundle,
+    "bundle_no_signer": bundle_without_shared_signer,
+    "atomic_bundle": atomic_bundle,
     "cex_funded": cex_funded,
     "automation": same_block_automation,
     "mayhem": mayhem_launch,

@@ -62,15 +62,20 @@ class BundleWeights(BaseModel):
     "critical" band on its own.
     """
 
-    common_direct_funder: float = 20.0
-    common_intermediary: float = 10.0
-    funding_amount_similarity: float = 8.0
-    funding_timing_similarity: float = 8.0
-    buy_amount_similarity: float = 8.0
-    buy_timing_similarity: float = 10.0
-    wallet_age_similarity: float = 6.0
-    historical_overlap: float = 10.0
-    repeated_cluster: float = 8.0
+    common_direct_funder: float = 16.0
+    common_intermediary: float = 9.0
+    # Payeur de frais partagé ou achats dans une même transaction. Le poids est
+    # élevé parce que le signal exige une *signature* : contrairement à un
+    # funder commun, il ne s'explique pas par un simple virement entre
+    # connaissances.
+    shared_signer: float = 12.0
+    funding_amount_similarity: float = 7.0
+    funding_timing_similarity: float = 7.0
+    buy_amount_similarity: float = 7.0
+    buy_timing_similarity: float = 9.0
+    wallet_age_similarity: float = 5.0
+    historical_overlap: float = 9.0
+    repeated_cluster: float = 7.0
     creator_linkage: float = 7.0
     other_anomalies: float = 5.0
 
@@ -88,6 +93,16 @@ class ScoringConfig(BaseModel):
     single_signal_ceiling: float = 35.0
     #: Ceiling applied when exactly `min_independent_signals - 1` fire.
     two_signal_ceiling: float = 55.0
+
+    #: Share of a cluster that must appear inside a *single* buy transaction
+    #: before atomic execution is treated as decisive (§21).
+    atomic_execution_share: float = 0.50
+    #: Floor applied to the score when atomic execution is established *and* the
+    #: independence rule is already satisfied. Several distinct buyers inside one
+    #: transaction cannot happen by coincidence: the transaction carries every
+    #: signature, so one operator assembled it. This never bypasses §46 — it only
+    #: applies once `min_independent_signals` families have fired.
+    atomic_execution_floor: float = 78.0
 
     #: A cluster smaller than this is never reported as a bundle candidate.
     min_cluster_size: int = 3

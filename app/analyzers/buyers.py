@@ -353,6 +353,109 @@ def transaction_order(tape: LaunchTape, *, first_n: int = 20) -> list[dict]:
     return rows
 
 
+@dataclass
+class ExecutionLinks:
+    """Liens déduits de la *construction* des transactions d'achat (§21).
+
+    C'est la famille de signaux la plus forte du moteur, et la plus difficile à
+    produire par hasard.
+
+    Sur Solana, l'acheteur doit signer sa propre transaction — son compte de
+    tokens est débité. Si le *payeur de frais* est un autre wallet, alors deux
+    clés ont signé la même transaction : quelqu'un détient les deux, ou
+    sponsorise délibérément l'autre. Et lorsque plusieurs acheteurs distincts
+    figurent dans une *même* transaction, l'atomicité ne laisse aucune place au
+    hasard — c'est une soumission unique, construite par un seul opérateur.
+
+    À la différence d'un funder commun, cela ne s'explique pas par « une
+    personne a envoyé des SOL à ses amis » : il faut la signature.
+    """
+
+    #: payeur de frais -> acheteurs dont il a payé la transaction (hors lui-même).
+    sponsors: dict[str, list[str]] = field(default_factory=dict)
+    #: signature -> acheteurs distincts présents dans cette même transaction.
+    atomic_groups: dict[str, list[str]] = field(default_factory=dict)
+    #: Signatures étayant chaque lien, pour la section preuves.
+    signatures: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def sponsored_wallets(self) -> set[str]:
+        return {wallet for wallets in self.sponsors.values() for wallet in wallets}
+
+    @property
+    def atomically_grouped_wallets(self) -> set[str]:
+        return {wallet for wallets in self.atomic_groups.values() for wallet in wallets}
+
+    def linked_wallets(self) -> set[str]:
+        return self.sponsored_wallets | self.atomically_grouped_wallets
+
+    def atomic_stats_for(self, members: set[str]) -> tuple[int, float]:
+        """``(plus grand groupe atomique, part du cluster concernée)``.
+
+        Sert au plancher de score : contrairement à ``strength_for``, qui
+        agrège toutes les formes de lien d'exécution, cette mesure isole la
+        seule qui ne souffre aucune interprétation alternative.
+        """
+        if not members:
+            return 0, 0.0
+        largest = 0
+        covered: set[str] = set()
+        for wallets in self.atomic_groups.values():
+            shared = set(wallets) & members
+            if len(shared) >= 2:
+                largest = max(largest, len(shared))
+                covered |= shared
+        return largest, len(covered) / len(members)
+
+    def strength_for(self, members: set[str]) -> float:
+        """Part des membres reliés par un signataire partagé ou une même transaction."""
+        if not members:
+            return 0.0
+        best = 0.0
+        for wallets in self.sponsors.values():
+            shared = len(set(wallets) & members)
+            if shared >= 2:
+                best = max(best, shared / len(members))
+        for wallets in self.atomic_groups.values():
+            shared = len(set(wallets) & members)
+            if shared >= 2:
+                # L'atomicité est la preuve la plus directe : on ne la dilue pas.
+                best = max(best, min(1.0, shared / len(members) * 1.25))
+        return min(1.0, best)
+
+
+def execution_links(tape: LaunchTape, *, first_n: int = 100) -> ExecutionLinks:
+    """Repère les acheteurs qui partagent un payeur de frais ou une transaction."""
+    links = ExecutionLinks()
+    buys = tape.buys[:first_n]
+
+    buyers_by_signature: dict[str, list[str]] = {}
+    for trade in buys:
+        parsed = tape.transactions.get(trade.signature)
+        if parsed is None:
+            continue
+        buyers_by_signature.setdefault(trade.signature, [])
+        if trade.wallet not in buyers_by_signature[trade.signature]:
+            buyers_by_signature[trade.signature].append(trade.wallet)
+
+        payer = parsed.fee_payer
+        if payer and payer != trade.wallet:
+            sponsored = links.sponsors.setdefault(payer, [])
+            if trade.wallet not in sponsored:
+                sponsored.append(trade.wallet)
+            links.signatures.setdefault(payer, []).append(trade.signature)
+
+    for signature, wallets in buyers_by_signature.items():
+        if len(wallets) > 1:
+            links.atomic_groups[signature] = sorted(wallets)
+
+    # Un payeur unique pour un seul acheteur n'apprend rien : c'est le cas normal
+    # d'un wallet qui paie ses propres frais via un relais quelconque.
+    links.sponsors = {k: v for k, v in links.sponsors.items() if len(v) >= 2}
+    links.signatures = {k: v for k, v in links.signatures.items() if k in links.sponsors}
+    return links
+
+
 def pair_of(profile: TokenProfile) -> str:
     return profile.pair.value if profile.pair is not PairType.UNKNOWN else "UNKNOWN"
 

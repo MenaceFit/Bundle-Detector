@@ -91,6 +91,7 @@ class TestIndependenceRule:
         signals = ClusterSignals(
             common_funder=1.0,
             common_intermediary=0.9,
+            shared_signer=0.9,
             funding_amount_similarity=0.97,
             funding_timing_similarity=0.95,
             buy_amount_similarity=0.93,
@@ -101,7 +102,7 @@ class TestIndependenceRule:
             creator_linkage=0.6,
         )
         breakdown = bundle_scoring.compute(signals)
-        assert breakdown.score >= 75
+        assert breakdown.score >= 75, breakdown.model_dump()
         assert breakdown.independent_signals >= 4
         assert breakdown.ceiling_applied is None
 
@@ -119,6 +120,78 @@ class TestIndependenceRule:
         signals = ClusterSignals(**{k: 1.0 for k in ClusterSignals().model_dump()})
         context = bundle_scoring.BundleContext(fresh_share=1.0, sell_coordination=1.0)
         assert bundle_scoring.compute(signals, context=context).score <= 100
+
+
+class TestAtomicExecutionFloor:
+    """§21 — l'atomicité est décisive, mais ne contourne pas §46."""
+
+    @staticmethod
+    def _corroborated() -> ClusterSignals:
+        """Trois familles modestes : au-dessus du plafond, sous le plancher."""
+        return ClusterSignals(
+            common_funder=0.7,
+            shared_signer=1.0,
+            buy_timing_similarity=0.8,
+            wallet_age_similarity=0.5,
+        )
+
+    def test_atomic_execution_raises_a_corroborated_score(self):
+        signals = self._corroborated()
+        plain = bundle_scoring.compute(signals)
+        atomic = bundle_scoring.compute(
+            signals,
+            context=bundle_scoring.BundleContext(atomic_group_size=5, atomic_share=1.0),
+        )
+        assert plain.score < atomic.score
+        assert atomic.floor_applied == ScoringConfig().atomic_execution_floor
+        assert "single transaction" in (atomic.floor_reason or "")
+
+    def test_the_floor_never_lowers_a_higher_score(self):
+        signals = ClusterSignals(
+            common_funder=1.0,
+            shared_signer=1.0,
+            funding_amount_similarity=1.0,
+            funding_timing_similarity=1.0,
+            buy_amount_similarity=1.0,
+            buy_timing_similarity=1.0,
+            wallet_age_similarity=1.0,
+            historical_overlap=1.0,
+            repeated_cluster=1.0,
+            creator_linkage=1.0,
+        )
+        high = bundle_scoring.compute(signals)
+        assert high.score > ScoringConfig().atomic_execution_floor
+        atomic = bundle_scoring.compute(
+            signals,
+            context=bundle_scoring.BundleContext(atomic_group_size=5, atomic_share=1.0),
+        )
+        assert atomic.score == high.score
+        assert atomic.floor_applied is None
+
+    def test_atomicity_alone_cannot_defeat_the_independence_rule(self):
+        """Une seule famille reste plafonnée, même atomique (§46)."""
+        breakdown = bundle_scoring.compute(
+            ClusterSignals(shared_signer=1.0),
+            context=bundle_scoring.BundleContext(atomic_group_size=8, atomic_share=1.0),
+        )
+        assert breakdown.independent_signals == 1
+        assert breakdown.floor_applied is None
+        assert breakdown.score <= ScoringConfig().single_signal_ceiling
+
+    def test_a_marginal_atomic_group_does_not_trigger_the_floor(self):
+        """Deux wallets sur dix : la part du cluster est trop faible."""
+        breakdown = bundle_scoring.compute(
+            self._corroborated(),
+            context=bundle_scoring.BundleContext(atomic_group_size=2, atomic_share=0.2),
+        )
+        assert breakdown.floor_applied is None
+
+    def test_the_floor_is_explained_to_the_reader(self):
+        breakdown = bundle_scoring.compute(
+            self._corroborated(),
+            context=bundle_scoring.BundleContext(atomic_group_size=5, atomic_share=1.0),
+        )
+        assert any("raised to" in line for line in bundle_scoring.explain(breakdown))
 
 
 class TestDamping:

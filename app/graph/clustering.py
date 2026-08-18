@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 import networkx as nx
 
@@ -73,8 +74,9 @@ class ClusterEngine:
         history: HistoryAnalysis | None = None,
         creator: CreatorProfile | None = None,
         launch_time: int | None = None,
+        execution: Any | None = None,
     ) -> list[Cluster]:
-        candidates = self._candidates(graph, profiles)
+        candidates = self._candidates(graph, profiles, execution=execution)
         clusters: list[Cluster] = []
 
         for index, candidate in enumerate(sorted(candidates, key=lambda c: -len(c.members)), start=1):
@@ -93,6 +95,7 @@ class ClusterEngine:
                 history=history,
                 creator=creator,
                 graph=graph,
+                execution=execution,
             )
             cluster.common_funders = sorted(
                 {
@@ -134,12 +137,26 @@ class ClusterEngine:
         return clusters
 
     # ------------------------------------------------------------------
-    def _candidates(self, graph: GraphBundle, profiles: dict[str, WalletProfile]) -> list[CandidateGroup]:
+    def _candidates(
+        self,
+        graph: GraphBundle,
+        profiles: dict[str, WalletProfile],
+        *,
+        execution: Any | None = None,
+    ) -> list[CandidateGroup]:
         groups: list[CandidateGroup] = []
 
         for component in nx.connected_components(graph.association):
             if len(component) >= 2:
                 groups.append(CandidateGroup(members=frozenset(component), methods={"graph"}))
+
+        # Un signataire partagé ou une transaction commune forment un groupe à
+        # eux seuls : ce sont des liens structurels, pas des ressemblances.
+        if execution is not None:
+            for wallets in list(execution.sponsors.values()) + list(execution.atomic_groups.values()):
+                known = frozenset(w for w in wallets if w in profiles)
+                if len(known) >= 2:
+                    groups.append(CandidateGroup(members=known, methods={"execution"}))
 
         for community in self._communities(graph.association):
             if len(community) >= 2:
@@ -223,6 +240,7 @@ class ClusterEngine:
         history: HistoryAnalysis | None,
         creator: CreatorProfile | None,
         graph: GraphBundle,
+        execution: Any | None = None,
     ) -> ClusterSignals:
         """Measure every cluster signal. Pure measurement, no weighting."""
         signals = ClusterSignals()
@@ -238,6 +256,8 @@ class ClusterEngine:
         # would give every cluster a floor of 1/size on this signal.
         signals.common_funder = _best_shared_share(graph.private_funder_groups, member_set)
         signals.common_intermediary = _best_shared_share(graph.intermediary_groups, member_set)
+        if execution is not None:
+            signals.shared_signer = execution.strength_for(member_set)
 
         # --- amounts and timing -----------------------------------------
         funding_amounts = [

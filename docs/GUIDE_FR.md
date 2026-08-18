@@ -282,14 +282,41 @@ Confidence             48%  (LOW) ← à quel point croire le reste
 
 ```
 Contributors:
-  +20 Common funding source
-  +10 Purchase synchronisation
-   +8 Funding size similarity
+  +16 Common funding source
+  +12 Shared transaction signer
+   +9 Purchase synchronisation
+   +7 Funding size similarity
    +7 Creator linkage
 ```
 
 Chaque point est attribué à un signal nommé. Si une contribution a été atténuée
 (exchange, Mayhem), la raison est affichée.
+
+**« Shared transaction signer »** mérite une explication, parce que c'est le
+signal le plus fort du moteur. Sur Solana, une transaction n'est valide que
+lorsque **tous les comptes qui dépensent l'ont signée**. Un acheteur signe donc
+forcément son propre achat. Deux conséquences :
+
+* Si le **payeur de frais** d'un achat est un *autre* wallet, deux clés ont
+  signé cette transaction. Ce n'est plus « quelqu'un m'a envoyé des SOL » :
+  c'est une seconde partie impliquée dans l'achat lui-même.
+* Si **plusieurs acheteurs distincts figurent dans une même transaction**,
+  toutes leurs signatures ont été réunies avant l'envoi. Un seul opérateur l'a
+  construite. Il n'y a pas d'explication innocente à ce cas — c'est la
+  définition même d'un bundle.
+
+Ce second cas déclenche une **remontée explicite du score** (plancher à 78),
+signalée en clair dans la décomposition :
+
+```
+Score raised to 78: 5 distinct buyers executed inside a single transaction
+(100% of the cluster). A transaction is only valid once every spending account
+has signed it, so one party assembled all of those signatures.
+```
+
+La remontée reste soumise à la règle d'indépendance : sans au moins trois
+familles de signaux, le plafond normal s'applique quand même. Elle ne peut que
+faire monter un score déjà corroboré, jamais en fabriquer un.
 
 ### Qualité des données
 

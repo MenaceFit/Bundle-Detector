@@ -21,11 +21,18 @@ amount, same second — and are therefore wrong most of the time. This engine is
 built around the opposite constraint.
 
 **One signal is never a bundle.** Signals are grouped into families that
-measure genuinely different things (who paid, how the payments looked, how the
-buys looked, what the wallets are, what they've done before, creator linkage).
-The bundle score is hard-capped unless several *independent* families agree.
-Five wallets funded with ~5 SOL each cannot reach a high score, however
-identical those amounts are.
+measure genuinely different things (who paid, who signed, how the payments
+looked, how the buys looked, what the wallets are, what they've done before,
+creator linkage). The bundle score is hard-capped unless several *independent*
+families agree. Five wallets funded with ~5 SOL each cannot reach a high score,
+however identical those amounts are.
+
+**Signatures outrank transfers.** A shared funder can be a generous friend; a
+shared *fee payer* cannot — on Solana that wallet signed someone else's
+purchase. And several distinct buyers inside one transaction is not a
+coincidence at all: the transaction only executes once every one of their
+signatures was collected. That case is escalated explicitly, and only once the
+independence rule above is already satisfied.
 
 **Shared infrastructure is detected behaviourally, not from a list.** Forty
 wallets funded by an exchange is not a forty-wallet bundle. The engine ships a

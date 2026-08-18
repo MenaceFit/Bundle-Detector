@@ -45,6 +45,10 @@ log = get_logger("SCORE")
 SIGNAL_MAP: dict[str, tuple[str, str, str]] = {
     "common_funder": ("common_direct_funder", "funding_topology", "Common funding source"),
     "common_intermediary": ("common_intermediary", "funding_topology", "Common intermediary"),
+    # Famille propre : la *construction* des transactions est une question
+    # distincte du financement (qui a payé) comme du cadencement (quand).
+    # Un opérateur peut financer depuis un wallet et signer depuis un autre.
+    "shared_signer": ("shared_signer", "execution", "Shared transaction signer"),
     "funding_amount_similarity": ("funding_amount_similarity", "funding_pattern", "Funding size similarity"),
     "funding_timing_similarity": ("funding_timing_similarity", "funding_pattern", "Funding synchronisation"),
     "buy_amount_similarity": ("buy_amount_similarity", "trade_pattern", "Purchase size similarity"),
@@ -78,6 +82,11 @@ class BundleContext:
     #: True when the cluster's shared funder was classified as infrastructure.
     funder_is_infrastructure: bool = False
     infrastructure_reason: str | None = None
+    #: Share of the cluster's members that bought inside a *single* transaction
+    #: alongside at least one other member (§21).
+    atomic_share: float = 0.0
+    #: Largest number of distinct cluster members observed in one transaction.
+    atomic_group_size: int = 0
 
 
 def compute(
@@ -144,6 +153,8 @@ def compute(
         breakdown.ceiling_applied = ceiling
         total = ceiling
 
+    total = _apply_atomic_floor(total, breakdown, fired=len(fired), config=config, context=context)
+
     breakdown.score = int(round(max(0.0, min(100.0, total))))
     log.info(
         "bundle scored",
@@ -152,6 +163,49 @@ def compute(
         ceiling=breakdown.ceiling_applied,
     )
     return breakdown
+
+
+def _apply_atomic_floor(
+    total: float,
+    breakdown: ScoreBreakdown,
+    *,
+    fired: int,
+    config: ScoringConfig,
+    context: BundleContext,
+) -> float:
+    """Raise the score to a floor when execution was provably atomic (§21).
+
+    Every other signal in the engine is circumstantial: a shared funder can be a
+    generous friend, matching amounts can be a copied strategy, identical timing
+    can be two bots racing the same block.  Atomic execution is not.  A Solana
+    transaction is only valid once every account that spends has signed it, so
+    several *distinct* buyers inside one transaction means one party held all of
+    those keys at the moment the transaction was assembled.
+
+    The floor is deliberately gated on the independence rule (§46) still being
+    satisfied: it lifts a well-corroborated case to the band it belongs in, and
+    is structurally incapable of turning a lone signal into a verdict.
+    """
+    if context.atomic_group_size < 2:
+        return total
+    if context.atomic_share < config.atomic_execution_share:
+        return total
+    if fired < config.min_independent_signals:
+        # L'atomicité est décisive, mais la règle d'indépendance reste absolue :
+        # sans corroboration, le plafond s'applique tel quel.
+        return total
+    if breakdown.ceiling_applied is not None:
+        return total
+    if total >= config.atomic_execution_floor:
+        return total
+
+    breakdown.floor_applied = config.atomic_execution_floor
+    breakdown.floor_reason = (
+        f"{context.atomic_group_size} distinct buyers executed inside a single transaction "
+        f"({context.atomic_share * 100:.0f}% of the cluster). A transaction is only valid once "
+        "every spending account has signed it, so one party assembled all of those signatures."
+    )
+    return config.atomic_execution_floor
 
 
 def _ceiling_for(fired: int, config: ScoringConfig) -> float | None:
@@ -222,6 +276,10 @@ def apply_to_cluster(
 def explain(breakdown: ScoreBreakdown) -> list[str]:
     """Human-readable lines for the explainable-score block (§85)."""
     lines = [f"+{c.points:.0f} {c.label}" for c in breakdown.top_contributions()]
+    if breakdown.floor_applied is not None:
+        lines.append(
+            f"Score raised to {breakdown.floor_applied:.0f}: {breakdown.floor_reason}"
+        )
     if breakdown.ceiling_applied is not None:
         lines.append(
             f"Score capped at {breakdown.ceiling_applied:.0f}: only {breakdown.independent_signals} "
