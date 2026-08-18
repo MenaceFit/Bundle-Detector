@@ -128,8 +128,8 @@ function renderTextLayer(
   target.globalAlpha = Math.min(1, Math.max(0, resolved.opacity));
   target.globalCompositeOperation = resolved.blendMode;
 
-  drawShadow(target, shape, resolved.style.shadow, options.scale);
-  drawGlow(target, shape, resolved.style.glow, options.scale);
+  drawShadow(target, shape, resolved.style.shadow, options.scale, options.quality);
+  drawGlow(target, shape, resolved.style.glow, options.scale, options.quality);
   target.drawImage(shape.canvas, 0, 0);
 
   target.restore();
@@ -159,7 +159,14 @@ function buildShape(
     const surface = blurred ? acquire(width, height) : shape;
 
     withLayerTransform(surface.ctx, layer, layout, options.scale, width, height, (ctx) => {
-      drawExtrusion(ctx, extrusion, style.stroke.enabled ? style.stroke.width : 0, layout, states);
+      drawExtrusion(
+        ctx,
+        extrusion,
+        style.stroke.enabled ? style.stroke.width : 0,
+        layout,
+        states,
+        options.scale,
+      );
     });
 
     if (blurred) {
@@ -202,7 +209,16 @@ function buildShape(
     withLayerTransform(faceSurface.ctx, layer, layout, options.scale, width, height, (ctx) => {
       ctx.globalCompositeOperation = 'source-atop';
       ctx.fillStyle = createGlossPaint(ctx, style.gloss, box);
-      ctx.fillRect(box.x - box.width, box.y - box.height, box.width * 3, box.height * 3);
+      // `source-atop` already clips to the face, so the fill only has to cover
+      // the text box — a margin for the stroke is enough. Filling a larger area
+      // just rasterises pixels that are discarded.
+      const margin = Math.max(box.width, box.height) * 0.15;
+      ctx.fillRect(
+        box.x - margin,
+        box.y - margin,
+        box.width + margin * 2,
+        box.height + margin * 2,
+      );
     });
   }
 
@@ -230,13 +246,21 @@ function drawExtrusion(
   strokeWidth: number,
   layout: TextLayout,
   states: LetterState[] | null,
+  deviceScale: number,
 ): void {
   const length = Math.hypot(extrusion.dirX, extrusion.dirY);
   if (length === 0) return;
 
   const ux = extrusion.dirX / length;
   const uy = extrusion.dirY / length;
-  const steps = Math.min(MAX_EXTRUSION_STEPS, Math.max(1, Math.round(extrusion.steps)));
+  // Slices closer together than ~1 device pixel are redundant: they land on the
+  // same pixels as their neighbour. Capping by what the depth can actually
+  // resolve keeps shallow extrusions cheap without changing how they look.
+  const resolvable = Math.ceil((extrusion.depth * deviceScale) / 1.2);
+  const steps = Math.min(
+    MAX_EXTRUSION_STEPS,
+    Math.max(1, Math.min(Math.round(extrusion.steps), Math.max(1, resolvable))),
+  );
 
   if (strokeWidth > 0) {
     ctx.lineJoin = 'round';

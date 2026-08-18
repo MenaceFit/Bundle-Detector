@@ -119,8 +119,15 @@ src/
   de refonte.
 - **Performance.** Aucun re-render React pendant la lecture : le canvas lit le
   store directement dans sa boucle `requestAnimationFrame`. Les canvas
-  intermédiaires sont recyclés dans un pool, et l'aperçu limite
-  automatiquement sa résolution interne au-delà d'un budget de pixels.
+  intermédiaires sont recyclés dans un pool indexé par dimensions exactes.
+  Ombres et halos sont calculés en résolution réduite — flouter à 1/N puis
+  agrandir donne le même résultat qu'un flou pleine résolution, pour un coût
+  N² fois moindre, puisque le flou a déjà supprimé tout détail plus fin que son
+  rayon.
+- **Qualité de lecture adaptative.** Pendant la lecture, la boucle mesure la
+  cadence réellement obtenue et ajuste la résolution interne de l'aperçu pour
+  la tenir. La pleine résolution revient dès l'arrêt : une image fixe est
+  toujours rendue au maximum, et l'export n'est jamais concerné.
 
 ---
 

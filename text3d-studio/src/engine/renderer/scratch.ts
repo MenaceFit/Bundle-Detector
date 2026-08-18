@@ -1,9 +1,15 @@
 /**
  * Reusable off-screen canvases.
  *
- * Compositing a layer needs two or three intermediate buffers per frame; at
- * 60 fps allocating them fresh would thrash the GC and stall playback. The pool
- * hands out canvases of the requested size and clears them on release.
+ * Compositing a layer needs several intermediate buffers per frame — the shape,
+ * the face surface, and a couple of small reduced-resolution masks for the
+ * shadow and the glow. Allocating them fresh every frame would thrash the GC,
+ * and so would recycling a canvas into a *different* size: assigning to
+ * `canvas.width` reallocates the backing store and clears it, which costs about
+ * as much as a new canvas.
+ *
+ * The pool therefore keys free lists by exact dimensions, so a steady render
+ * loop always gets a same-size buffer back and only pays a `clearRect`.
  */
 
 export interface Scratch {
@@ -11,8 +17,25 @@ export interface Scratch {
   ctx: CanvasRenderingContext2D;
 }
 
-const MAX_POOLED = 6;
-const pool: Scratch[] = [];
+/** Total pixels allowed to sit idle in the pool (~256 MB of RGBA). */
+const MAX_POOLED_PIXELS = 64_000_000;
+
+const freeLists = new Map<string, Scratch[]>();
+let pooledPixels = 0;
+
+function key(width: number, height: number): string {
+  return `${width}x${height}`;
+}
+
+function reset(scratch: Scratch): void {
+  const { ctx, canvas } = scratch;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.filter = 'none';
+  ctx.imageSmoothingEnabled = true;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
 
 export function createCanvas(width: number, height: number): Scratch {
   const canvas = document.createElement('canvas');
@@ -27,27 +50,11 @@ export function acquire(width: number, height: number): Scratch {
   const w = Math.max(1, Math.ceil(width));
   const h = Math.max(1, Math.ceil(height));
 
-  const index = pool.findIndex((s) => s.canvas.width === w && s.canvas.height === h);
-  if (index >= 0) {
-    const [scratch] = pool.splice(index, 1);
-    if (scratch) {
-      scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
-      scratch.ctx.globalAlpha = 1;
-      scratch.ctx.globalCompositeOperation = 'source-over';
-      scratch.ctx.filter = 'none';
-      scratch.ctx.clearRect(0, 0, w, h);
-      return scratch;
-    }
-  }
-
-  const reused = pool.pop();
+  const list = freeLists.get(key(w, h));
+  const reused = list?.pop();
   if (reused) {
-    reused.canvas.width = w;
-    reused.canvas.height = h;
-    reused.ctx.setTransform(1, 0, 0, 1, 0, 0);
-    reused.ctx.globalAlpha = 1;
-    reused.ctx.globalCompositeOperation = 'source-over';
-    reused.ctx.filter = 'none';
+    pooledPixels -= w * h;
+    reset(reused);
     return reused;
   }
 
@@ -55,13 +62,39 @@ export function acquire(width: number, height: number): Scratch {
 }
 
 export function release(scratch: Scratch): void {
-  if (pool.length >= MAX_POOLED) return;
-  scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
-  scratch.ctx.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
-  pool.push(scratch);
+  const { width, height } = scratch.canvas;
+  const pixels = width * height;
+
+  if (pooledPixels + pixels > MAX_POOLED_PIXELS) {
+    // Drop it: shrinking to 1x1 lets the browser free the backing store now.
+    scratch.canvas.width = 1;
+    scratch.canvas.height = 1;
+    return;
+  }
+
+  reset(scratch);
+  const id = key(width, height);
+  const list = freeLists.get(id);
+  if (list) list.push(scratch);
+  else freeLists.set(id, [scratch]);
+  pooledPixels += pixels;
 }
 
 /** Drops every pooled canvas — used when an export finished with huge buffers. */
 export function clearPool(): void {
-  pool.length = 0;
+  for (const list of freeLists.values()) {
+    for (const scratch of list) {
+      scratch.canvas.width = 1;
+      scratch.canvas.height = 1;
+    }
+  }
+  freeLists.clear();
+  pooledPixels = 0;
+}
+
+/** Pool occupancy, for diagnostics. */
+export function poolStats(): { buffers: number; pixels: number } {
+  let buffers = 0;
+  for (const list of freeLists.values()) buffers += list.length;
+  return { buffers, pixels: pooledPixels };
 }
