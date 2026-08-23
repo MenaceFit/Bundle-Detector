@@ -35,6 +35,9 @@ const COALESCE_MS = 700;
 
 export type ToolSection = 'text' | 'style' | '3d' | 'shadow' | 'animation' | 'effects' | 'presets';
 
+/** Top-level workspaces. Each owns its document; they share the engines. */
+export type Workspace = 'text3d' | 'captions';
+
 export interface Notification {
   id: string;
   kind: 'info' | 'success' | 'error';
@@ -62,6 +65,7 @@ export interface AppState {
   zoom: number;
   panX: number;
   panY: number;
+  workspace: Workspace;
   tool: ToolSection;
   exportOpen: boolean;
   referenceImage: string | null;
@@ -126,6 +130,7 @@ export interface AppState {
   redo: () => void;
 
   /* ----------------------------------------------------------------- ui */
+  setWorkspace: (workspace: Workspace) => void;
   setTool: (tool: ToolSection) => void;
   setZoom: (zoom: number) => void;
   zoomBy: (factor: number) => void;
@@ -202,6 +207,7 @@ export const useStore = create<AppState>((set, get) => {
     zoom: 1,
     panX: 0,
     panY: 0,
+    workspace: 'text3d',
     tool: 'text',
     exportOpen: false,
     referenceImage: null,
@@ -578,6 +584,7 @@ export const useStore = create<AppState>((set, get) => {
 
     /* --------------------------------------------------------------- ui */
 
+    setWorkspace: (workspace) => set({ workspace }),
     setTool: (tool) => set({ tool }),
     setZoom: (zoom) => set({ zoom: clamp(zoom, 0.05, 8) }),
     zoomBy: (factor) => set((state) => ({ zoom: clamp(state.zoom * factor, 0.05, 8) })),

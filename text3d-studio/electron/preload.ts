@@ -1,4 +1,13 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
+
+export interface FfmpegStatus {
+  available: boolean;
+  ffmpegPath: string | null;
+  ffprobePath: string | null;
+  version: string | null;
+  source: 'bundled' | 'system' | 'configured' | 'none';
+  error?: string;
+}
 
 /**
  * The only surface the renderer gets. Every method is an explicit, typed call
@@ -33,6 +42,69 @@ const desktop = {
   appInfo: (): Promise<{ version: string; platform: string; isDev: boolean }> =>
     ipcRenderer.invoke('app:info'),
 
+  /* ------------------------------------------------------- video captions */
+
+  video: {
+    pick: (): Promise<{ path: string; name: string } | null> => ipcRenderer.invoke('video:pick'),
+
+    pickOutput: (suggestedName: string): Promise<{ path: string } | null> =>
+      ipcRenderer.invoke('video:pickOutput', suggestedName),
+
+    probe: (payload: { path: string; args: string[] }): Promise<string> =>
+      ipcRenderer.invoke('video:probe', payload),
+
+    /**
+     * Runs a cached ffmpeg derivation. `placeholder` marks where the main
+     * process substitutes the real output path inside `buildArgs`.
+     */
+    derive: (payload: {
+      sourcePath: string;
+      outputName: string;
+      buildArgs: string[];
+      placeholder: string;
+    }): Promise<{ path: string }> => ipcRenderer.invoke('media:run', payload),
+
+    readFile: (filePath: string): Promise<ArrayBuffer> =>
+      ipcRenderer.invoke('media:readFile', filePath),
+
+    waveform: (payload: { wavPath: string; buckets: number }): Promise<number[]> =>
+      ipcRenderer.invoke('media:waveform', payload),
+
+    clearCache: (): Promise<void> => ipcRenderer.invoke('cache:clear'),
+  },
+
+  ffmpeg: {
+    status: (): Promise<FfmpegStatus> => ipcRenderer.invoke('ffmpeg:status'),
+    setPath: (value: string | null): Promise<FfmpegStatus> =>
+      ipcRenderer.invoke('ffmpeg:setPath', value),
+    pickBinary: (): Promise<FfmpegStatus | null> => ipcRenderer.invoke('ffmpeg:pickBinary'),
+  },
+
+  render: {
+    start: (payload: { id: string; args: string[]; totalSec: number }): Promise<{ started: boolean }> =>
+      ipcRenderer.invoke('render:start', payload),
+
+    /** Resolves false once ffmpeg stops accepting frames. */
+    frame: (payload: { id: string; data: ArrayBuffer }): Promise<boolean> =>
+      ipcRenderer.invoke('render:frame', payload),
+
+    finish: (id: string): Promise<{ ok: boolean; code: number | null; stderr: string }> =>
+      ipcRenderer.invoke('render:finish', id),
+
+    cancel: (id: string): Promise<boolean> => ipcRenderer.invoke('render:cancel', id),
+
+    onProgress: (
+      handler: (payload: { id: string; chunk: string; totalSec: number }) => void,
+    ): (() => void) => {
+      const listener = (
+        _event: IpcRendererEvent,
+        payload: { id: string; chunk: string; totalSec: number },
+      ): void => handler(payload);
+      ipcRenderer.on('render:progress', listener);
+      return () => ipcRenderer.removeListener('render:progress', listener);
+    },
+  },
+
   onMenuCommand: (handler: (command: string) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, command: string): void => handler(command);
     ipcRenderer.on('menu:command', listener);
@@ -41,5 +113,10 @@ const desktop = {
 };
 
 contextBridge.exposeInMainWorld('desktop', desktop);
+
+// Dropping a file only yields a real path through webUtils in current Electron.
+contextBridge.exposeInMainWorld('webUtils', {
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+});
 
 export type DesktopBridge = typeof desktop;

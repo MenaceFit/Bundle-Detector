@@ -7,6 +7,7 @@ import type { StylePreset } from '@/types';
 import type { ProjectIO } from './useProjectIO';
 
 const FONT_EXTENSIONS = /\.(ttf|otf|woff2?)$/i;
+const VIDEO_EXTENSIONS = /\.(mp4|mov|webm|mkv|m4v|avi)$/i;
 const IMAGE_TYPES = /^image\//;
 
 /**
@@ -46,6 +47,22 @@ export function useDragAndDrop(io: ProjectIO): boolean {
 
       for (const file of [...event.dataTransfer.files]) {
         try {
+          if (VIDEO_EXTENSIONS.test(file.name)) {
+            // Electron exposes the real path, so the video is opened in place
+            // rather than copied into memory.
+            const filePath = window.desktop ? webUtilsPath(file) : null;
+            if (!filePath) {
+              notify('error', 'Le glisser-déposer vidéo nécessite l’application de bureau.');
+              continue;
+            }
+            const { importVideo } = await import(
+              '@/components/VideoCaptions/VideoCaptionsWorkspace'
+            );
+            useStore.getState().setWorkspace('captions');
+            await importVideo(filePath, file.name);
+            continue;
+          }
+
           if (FONT_EXTENSIONS.test(file.name)) {
             const family = await importFontFile(file);
             if (family) notify('success', `Police importée : ${family}`);
@@ -100,4 +117,23 @@ export function useDragAndDrop(io: ProjectIO): boolean {
   }, [applyStylePreset, io, notify, setReferenceImage]);
 
   return over;
+}
+
+/**
+ * Absolute path of a dropped file.
+ *
+ * Electron used to expose `File.path`; newer versions moved it behind
+ * `webUtils.getPathForFile`. Both are probed so the drop works across versions,
+ * and the browser simply has neither.
+ */
+function webUtilsPath(file: File): string | null {
+  const legacy = (file as File & { path?: string }).path;
+  if (typeof legacy === 'string' && legacy.length > 0) return legacy;
+  const utils = (window as { webUtils?: { getPathForFile(file: File): string } }).webUtils;
+  try {
+    const resolved = utils?.getPathForFile(file);
+    return resolved && resolved.length > 0 ? resolved : null;
+  } catch {
+    return null;
+  }
 }

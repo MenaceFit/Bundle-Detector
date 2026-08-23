@@ -1,12 +1,21 @@
 # Text3D Studio
 
-Éditeur local de texte 3D et de typographie animée. Application desktop
-(Electron + React + TypeScript + Vite) qui génère des textes graphiques
-stylisés — style « 3D cartoon » massif, extrudé, avec contour, ombre et glow —
-et les exporte en **PNG transparent**, WebP, WebM, GIF ou séquence PNG.
+Suite locale de création visuelle. Application desktop (Electron + React +
+TypeScript + Vite) organisée en deux ateliers :
+
+- **Text 3D** — typographie 3D animée, exportée en **PNG transparent**, WebP,
+  WebM, GIF ou séquence PNG.
+- **Video Captions** — importer un MP4, transcrire la parole en local, obtenir
+  des **timestamps mot par mot**, générer des sous-titres dynamiques animés,
+  puis exporter un MP4 avec les sous-titres incrustés et les fichiers SRT / VTT
+  / ASS / JSON.
+
+Les deux ateliers partagent le même moteur de rendu : un sous-titre est un
+calque texte du moteur 3D, pas un second moteur graphique.
 
 Tout fonctionne **100 % en local** : aucun serveur, aucune API externe, aucun
-compte, aucune base distante. Les fichiers générés restent sur la machine.
+compte, aucune base distante. Les fichiers générés restent sur la machine, et
+la vidéo source n'est jamais modifiée.
 
 ---
 
@@ -45,6 +54,90 @@ sans affichage), le script affiche la raison et l'application reste accessible
 à l'URL indiquée dans le terminal. Vous pouvez continuer à travailler dans
 Chrome ou Edge — seuls les dialogues de fichiers natifs changent (le navigateur
 utilise téléchargements et sélecteur de fichiers à la place).
+
+## Video Captions
+
+### Ce qu'il faut installer
+
+| Dépendance | Rôle | Installation |
+| --- | --- | --- |
+| **FFmpeg** | lire, décoder, recadrer et réencoder la vidéo | requis — voir ci-dessous |
+| Modèle Whisper | transcription locale | téléchargé une fois au premier usage |
+
+L'atelier détecte FFmpeg au démarrage : d'abord un binaire configuré, puis
+`ffmpeg-static` s'il est installé, puis le `ffmpeg` du système. S'il reste
+introuvable, le panneau affiche l'erreur et propose de désigner le binaire à la
+main. Sous Linux : `apt install ffmpeg` ; sous macOS : `brew install ffmpeg` ;
+sous Windows : [ffmpeg.org](https://ffmpeg.org/download.html), puis ajoutez-le
+au PATH ou indiquez son chemin dans l'application.
+
+Le modèle de transcription est téléchargé au premier lancement d'une analyse
+(75 à 480 Mo selon le niveau choisi), puis mis en cache : les analyses
+suivantes fonctionnent hors ligne. L'audio ne quitte jamais la machine.
+
+**Cet atelier ne fonctionne que dans l'application de bureau** : piloter FFmpeg
+et lire un fichier local depuis le disque est hors de portée d'un navigateur.
+
+### Le déroulé
+
+1. **Importer** un MP4/MOV/WebM/MKV (bouton ou glisser-déposer). L'application
+   affiche résolution, durée, FPS, codecs, canaux audio et poids.
+2. **Analyser** : l'audio est extrait en 16 kHz mono, puis transcrit localement.
+   Trois niveaux — *Fast*, *Balanced*, *Accurate* — avec estimation du temps de
+   traitement et annulation possible.
+3. **Relire** : les mots de faible confiance sont listés en premier. Double-clic
+   pour corriger un mot, réglage des timestamps au centième, découpe et fusion
+   des sous-titres.
+4. **Styler** : 13 presets, du classique au « viral ». Le mot prononcé peut
+   changer de couleur, grossir, recevoir un fond arrondi ou un halo.
+5. **Exporter** : MP4 avec sous-titres incrustés, et/ou SRT, VTT, ASS, JSON.
+
+### Synchronisation
+
+C'est le critère prioritaire du moteur, avant tout effet visuel :
+
+- la transcription produit des timestamps **par mot**, pas par phrase ;
+- les timings sont normalisés une seule fois — jamais d'inversion, jamais de
+  chevauchement, un mot sans timestamp est interpolé plutôt que perdu, car le
+  supprimer désynchroniserait tout ce qui suit ;
+- l'aperçu prend son temps depuis l'élément vidéo lui-même, donc image, son et
+  texte ne peuvent pas dériver ;
+- l'entrée animée d'un mot est calée sur l'instant où il est prononcé :
+  l'animation décore un timing, elle ne le déplace jamais.
+
+### Découpage automatique
+
+Le mode *Auto* déduit le nombre de mots par sous-titre du **débit de parole
+réel**, pour viser une durée lisible : un rap rapide et un podcast lent
+produisent des sous-titres de durée comparable. Les coupures suivent, par ordre
+de priorité : un silence assez long pour être une vraie pause, la ponctuation de
+fin de phrase, puis les budgets de durée, de caractères et de mots.
+
+### Conversion verticale
+
+Une vidéo horizontale peut être portée en 9:16 avec quatre cadrages : recadrer,
+contenir, étirer, ou **fond flouté** (la source agrandie et floutée remplit le
+cadre, la vidéo d'origine reste centrée et intacte).
+
+### Formats de sortie
+
+| Format | Contenu |
+| --- | --- |
+| MP4 | vidéo + sous-titres incrustés, **audio d'origine copié sans réencodage** |
+| SRT | sous-titres standard |
+| VTT | WebVTT |
+| ASS | conserve police, taille, couleurs, contour, ombre et position |
+| JSON | conserve les **timings mot par mot** |
+
+Le projet se sauvegarde en `.video-project.json` : il ne contient que le chemin
+de la vidéo, la transcription, les styles et les réglages — jamais la vidéo.
+
+### Ce qui n'est pas encore fait
+
+Conformément à la règle « aucun bouton fictif », les sections suivantes ne sont
+pas présentes dans l'interface tant qu'elles ne font rien de réel : Audio
+Enhancer, Video Enhancer, upscaling, export en lot, synchronisation au beat,
+traduction et sous-titres bilingues.
 
 ## Build production
 
@@ -93,6 +186,11 @@ src/
 ├── export/        PNG / WebP / WebM / GIF / séquence PNG
 │   ├── gif/           Quantification median-cut + encodeur LZW GIF89a maison
 │   └── zip.ts         Écriture ZIP « stored » pour la séquence en navigateur
+│
+├── ffmpeg/        Constructeurs de commandes et lecture ffprobe (purs, testés)
+├── transcription/ Interface moteur, Whisper local, normalisation des timings
+├── captions/      Modèle, segmentation, styles, presets, rendu, SRT/VTT/ASS/JSON
+├── videoproject/  Store de l'atelier vidéo, pipeline d'export, format projet
 │
 ├── state/         Store Zustand : document unique + historique undo/redo
 ├── project/       Schéma, defaults, sérialisation, presets, randomize

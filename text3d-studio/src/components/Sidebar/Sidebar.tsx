@@ -1,4 +1,4 @@
-import { useStore, type ToolSection } from '@/state/store';
+import { useStore, type ToolSection, type Workspace } from '@/state/store';
 
 const ITEMS: Array<{ id: ToolSection; icon: string; label: string; hint: string }> = [
   { id: 'text', icon: 'T', label: 'Texte', hint: 'Contenu, police, espacement, transformation' },
@@ -10,12 +10,37 @@ const ITEMS: Array<{ id: ToolSection; icon: string; label: string; hint: string 
   { id: 'presets', icon: '❖', label: 'Presets', hint: 'Bibliothèque de styles et randomize' },
 ];
 
+const WORKSPACES: Array<{ id: Workspace; icon: string; label: string; hint: string }> = [
+  { id: 'text3d', icon: '❯', label: 'Text 3D', hint: 'Typographie 3D et animation' },
+  { id: 'captions', icon: '⛶', label: 'Video Captions', hint: 'Sous-titres dynamiques sur une vidéo' },
+];
+
 export function Sidebar() {
   const tool = useStore((state) => state.tool);
   const setTool = useStore((state) => state.setTool);
+  const workspace = useStore((state) => state.workspace);
+  const setWorkspace = useStore((state) => state.setWorkspace);
 
   return (
     <nav className="sidebar">
+      <div className="sidebar-section">Ateliers</div>
+      {WORKSPACES.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className={`sidebar-item${workspace === item.id ? ' active' : ''}`}
+          onClick={() => setWorkspace(item.id)}
+          title={item.hint}
+        >
+          <span className="sidebar-icon">{item.icon}</span>
+          <span className="sidebar-label">{item.label}</span>
+        </button>
+      ))}
+
+      {workspace === 'captions' ? (
+        <div style={{ flex: 1 }} />
+      ) : (
+        <>
       <div className="sidebar-section">Outils</div>
       {ITEMS.map((item) => (
         <button
@@ -32,6 +57,8 @@ export function Sidebar() {
 
       <div style={{ flex: 1 }} />
       <ShortcutHelp />
+        </>
+      )}
     </nav>
   );
 }

@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar/Sidebar';
 import { CanvasView } from './components/Canvas/CanvasView';
 import { PropertiesPanel } from './components/Properties/PropertiesPanel';
 import { Timeline } from './components/Timeline/Timeline';
+import { VideoCaptionsWorkspace } from './components/VideoCaptions/VideoCaptionsWorkspace';
 import { ExportDialog } from './components/Export/ExportDialog';
 import { Notifications } from './components/ui/Notifications';
 import { useProjectIO } from './hooks/useProjectIO';
@@ -18,6 +19,7 @@ const log = createLogger('app');
 export function App() {
   const io = useProjectIO();
   const dragging = useDragAndDrop(io);
+  const workspace = useStore((state) => state.workspace);
 
   useKeyboardShortcuts(io);
   useMenuCommands(io);
@@ -27,12 +29,21 @@ export function App() {
   return (
     <div className="app">
       <Toolbar io={io} />
-      <div className="app-body">
-        <Sidebar />
-        <CanvasView />
-        <PropertiesPanel />
-      </div>
-      <Timeline />
+      {workspace === 'text3d' ? (
+        <>
+          <div className="app-body">
+            <Sidebar />
+            <CanvasView />
+            <PropertiesPanel />
+          </div>
+          <Timeline />
+        </>
+      ) : (
+        <div className="app-body app-body-captions">
+          <Sidebar />
+          <VideoCaptionsWorkspace />
+        </div>
+      )}
       <ExportDialog />
       <Notifications />
       {dragging && (

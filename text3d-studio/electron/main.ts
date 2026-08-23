@@ -4,11 +4,43 @@ import {
   dialog,
   ipcMain,
   Menu,
+  net,
+  protocol,
   shell,
   type MenuItemConstructorOptions,
 } from 'electron';
+import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import {
+  cacheDirFor,
+  cancelAllJobs,
+  cancelJob,
+  clearCache,
+  computeWaveform,
+  detectBinaries,
+  finishJob,
+  probe,
+  runFfmpeg,
+  setCacheRoot,
+  setConfiguredFfmpegPath,
+  startFfmpegJob,
+  writeJobFrame,
+} from './ffmpegRunner';
+
+/**
+ * Local media are served through a dedicated scheme rather than read into
+ * memory: a `<video>` pointed at `appmedia://` streams from disk and can seek,
+ * which is what keeps a long file from being buffered whole.
+ */
+const MEDIA_SCHEME = 'appmedia';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MEDIA_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false },
+  },
+]);
 
 const DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 const isDev = Boolean(DEV_SERVER_URL);
@@ -208,6 +240,117 @@ function registerIpc(): void {
     shell.showItemInFolder(assertWritablePath(filePath));
   });
 
+  /* ------------------------------------------------------- video captions */
+
+  ipcMain.handle('video:pick', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Importer une vidéo',
+      filters: [{ name: 'Vidéos', extensions: ['mp4', 'mov', 'webm', 'mkv', 'm4v', 'avi'] }],
+      properties: ['openFile'],
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    return { path: filePath, name: path.basename(filePath) };
+  });
+
+  ipcMain.handle('video:pickOutput', async (_event, suggestedName: string) => {
+    const result = await dialog.showSaveDialog({
+      title: 'Exporter la vidéo',
+      defaultPath: suggestedName,
+      filters: [{ name: 'Vidéo MP4', extensions: ['mp4'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return { path: assertWritablePath(result.filePath) };
+  });
+
+  ipcMain.handle('ffmpeg:status', () => detectBinaries());
+
+  ipcMain.handle('ffmpeg:setPath', async (_event, value: string | null) => {
+    setConfiguredFfmpegPath(value);
+    return detectBinaries();
+  });
+
+  ipcMain.handle('ffmpeg:pickBinary', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Sélectionner le binaire ffmpeg',
+      properties: ['openFile'],
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    setConfiguredFfmpegPath(filePath);
+    return detectBinaries();
+  });
+
+  ipcMain.handle('video:probe', async (_event, payload: { path: string; args: string[] }) =>
+    probe(payload.path, payload.args),
+  );
+
+  /**
+   * Runs an ffmpeg command whose output lands in the per-file cache directory.
+   *
+   * The caller passes the argument list with a placeholder standing in for the
+   * output path, so the renderer never learns or chooses a filesystem location,
+   * and an artefact already produced for this exact file is reused as-is. The
+   * source file is only ever read.
+   */
+  ipcMain.handle(
+    'media:run',
+    async (
+      _event,
+      payload: { sourcePath: string; outputName: string; buildArgs: string[]; placeholder: string },
+    ) => {
+      const dir = await cacheDirFor(payload.sourcePath);
+      const output = path.join(dir, payload.outputName);
+      const already = await fs
+        .stat(output)
+        .then((stat) => stat.size > 0)
+        .catch(() => false);
+      if (!already) {
+        const args = payload.buildArgs.map((arg) =>
+          arg === payload.placeholder ? output : arg,
+        );
+        await runFfmpeg(args);
+      }
+      return { path: output };
+    },
+  );
+
+  ipcMain.handle('media:readFile', async (_event, filePath: string) => {
+    const data = await fs.readFile(assertWritablePath(filePath));
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  });
+
+  ipcMain.handle(
+    'media:waveform',
+    async (_event, payload: { wavPath: string; buckets: number }) =>
+      computeWaveform(assertWritablePath(payload.wavPath), Math.max(16, payload.buckets)),
+  );
+
+  ipcMain.handle('cache:clear', () => clearCache());
+
+  /* ------------------------------------------------------------- render job */
+
+  ipcMain.handle(
+    'render:start',
+    async (event, payload: { id: string; args: string[]; totalSec: number }) => {
+      await startFfmpegJob(payload.id, payload.args, (chunk) => {
+        event.sender.send('render:progress', { id: payload.id, chunk, totalSec: payload.totalSec });
+      });
+      return { started: true };
+    },
+  );
+
+  ipcMain.handle('render:frame', async (_event, payload: { id: string; data: ArrayBuffer }) =>
+    writeJobFrame(payload.id, new Uint8Array(payload.data)),
+  );
+
+  ipcMain.handle('render:finish', (_event, id: string) => finishJob(id));
+
+  ipcMain.handle('render:cancel', (_event, id: string) => {
+    cancelJob(id);
+    return true;
+  });
+
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     platform: process.platform,
@@ -215,7 +358,26 @@ function registerIpc(): void {
   }));
 }
 
+function registerMediaProtocol(): void {
+  protocol.handle(MEDIA_SCHEME, (request) => {
+    try {
+      // appmedia://local/<url-encoded absolute path>
+      const url = new URL(request.url);
+      const filePath = path.resolve(decodeURIComponent(url.pathname));
+      // net.fetch on a file URL honours Range headers, so seeking works.
+      return net.fetch(pathToFileURL(filePath).toString(), {
+        headers: request.headers,
+        method: request.method,
+      });
+    } catch {
+      return new Response('Fichier introuvable', { status: 404 });
+    }
+  });
+}
+
 void app.whenReady().then(() => {
+  registerMediaProtocol();
+  setCacheRoot(path.join(app.getPath('userData'), 'media-cache'));
   registerIpc();
   buildMenu();
   createWindow();
@@ -223,6 +385,11 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  // Never leave an ffmpeg child running after the window is gone.
+  cancelAllJobs();
 });
 
 app.on('window-all-closed', () => {
