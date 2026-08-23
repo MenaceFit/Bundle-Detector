@@ -8,6 +8,7 @@ import { QUALITY_PRESETS, type FitMode } from '@/ffmpeg';
 import { saveBlob } from '@/export/save';
 import { sanitizeFileName } from '@/utils/format';
 import { useStore } from '@/state/store';
+import { humanizeError } from '@/videoproject/errors';
 
 const RESOLUTIONS: Array<[string, number, number]> = [
   ['1080 × 1920', 1080, 1920],
@@ -68,7 +69,7 @@ export function VideoExportDialog({ onClose }: { onClose: () => void }) {
       notify('success', `Vidéo exportée : ${result.outputPath}`);
       onClose();
     } catch (error) {
-      const message = (error as Error).message;
+      const message = humanizeError(error);
       setExportJob({ running: false, ratio: null, label: '', error: message });
       notify('error', `Export impossible : ${message}`);
     } finally {

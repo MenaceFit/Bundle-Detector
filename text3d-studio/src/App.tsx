@@ -11,6 +11,7 @@ import { useProjectIO } from './hooks/useProjectIO';
 import { useKeyboardShortcuts, useMenuCommands } from './hooks/useKeyboardShortcuts';
 import { useAutosave, clearAutosave, readAutosave } from './hooks/useAutosave';
 import { useDragAndDrop } from './hooks/useDragAndDrop';
+import { useCaptionShortcuts } from './hooks/useCaptionShortcuts';
 import { useStore } from './state/store';
 import { createLogger } from './utils/logger';
 
@@ -22,6 +23,7 @@ export function App() {
   const workspace = useStore((state) => state.workspace);
 
   useKeyboardShortcuts(io);
+  useCaptionShortcuts();
   useMenuCommands(io);
   useAutosave();
   useAutosaveRecovery();

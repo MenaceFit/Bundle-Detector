@@ -61,15 +61,18 @@ utilise téléchargements et sélecteur de fichiers à la place).
 
 | Dépendance | Rôle | Installation |
 | --- | --- | --- |
-| **FFmpeg** | lire, décoder, recadrer et réencoder la vidéo | requis — voir ci-dessous |
+| **FFmpeg** | lire, décoder, recadrer et réencoder la vidéo | **automatique** avec `npm install` |
 | Modèle Whisper | transcription locale | téléchargé une fois au premier usage |
 
-L'atelier détecte FFmpeg au démarrage : d'abord un binaire configuré, puis
-`ffmpeg-static` s'il est installé, puis le `ffmpeg` du système. S'il reste
-introuvable, le panneau affiche l'erreur et propose de désigner le binaire à la
-main. Sous Linux : `apt install ffmpeg` ; sous macOS : `brew install ffmpeg` ;
-sous Windows : [ffmpeg.org](https://ffmpeg.org/download.html), puis ajoutez-le
-au PATH ou indiquez son chemin dans l'application.
+FFmpeg et ffprobe sont téléchargés par `npm install` (paquets `ffmpeg-static` et
+`ffprobe-static`) : il n'y a rien à installer soi-même, et les binaires sont
+inclus dans le paquet desktop.
+
+Ce sont des dépendances *optionnelles* : si leur téléchargement est bloqué
+(réseau d'entreprise, proxy), l'application le détecte et bascule sur le
+`ffmpeg` du système. L'ordre de recherche est : chemin indiqué par l'utilisateur,
+puis binaires fournis, puis PATH système. En dernier recours, le panneau propose
+« Revérifier » et « Indiquer le binaire… », sans redémarrage.
 
 Le modèle de transcription est téléchargé au premier lancement d'une analyse
 (75 à 480 Mo selon le niveau choisi), puis mis en cache : les analyses
@@ -129,8 +132,13 @@ cadre, la vidéo d'origine reste centrée et intacte).
 | ASS | conserve police, taille, couleurs, contour, ombre et position |
 | JSON | conserve les **timings mot par mot** |
 
-Le projet se sauvegarde en `.video-project.json` : il ne contient que le chemin
-de la vidéo, la transcription, les styles et les réglages — jamais la vidéo.
+Le projet se sauvegarde en `.video-project.json` (`Ctrl + S` depuis l'atelier
+vidéo) : il ne contient que le chemin de la vidéo, la transcription, les styles
+et les réglages — jamais la vidéo. `Ouvrir` reconnaît le format et bascule sur
+le bon atelier.
+
+Raccourcis de l'atelier : `Espace` lecture/pause, `←` `→` image par image
+(`Maj` pour dix images), `Début` / `Fin` pour les extrémités.
 
 ### Ce qui n'est pas encore fait
 

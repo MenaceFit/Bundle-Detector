@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
-import { promises as fs, createReadStream } from 'node:fs';
+import { promises as fs, createReadStream, existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
@@ -51,28 +51,32 @@ function run(binary: string, args: string[]): Promise<{ stdout: string; stderr: 
   });
 }
 
-/** Resolves `ffmpeg-static` if it is installed, without making it a hard dep. */
-function bundledFfmpeg(): string | null {
+/**
+ * Resolves a binary shipped by `ffmpeg-static` / `ffprobe-static`.
+ *
+ * Both are optional dependencies: if their post-install download was blocked,
+ * the module may resolve while the binary is absent, so its presence on disk is
+ * checked rather than assumed. In a packaged app the binaries are unpacked
+ * beside the asar archive, hence the path rewrite.
+ */
+function bundledBinary(moduleName: 'ffmpeg-static' | 'ffprobe-static'): string | null {
   try {
-    const resolved = requireModule('ffmpeg-static') as string | { path?: string } | null;
+    const resolved = requireModule(moduleName) as string | { path?: string } | null;
     const value = typeof resolved === 'string' ? resolved : resolved?.path;
     if (!value) return null;
-    // In a packaged app the binary is unpacked next to the asar archive.
-    return value.replace('app.asar', 'app.asar.unpacked');
+    const unpacked = value.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+    return existsSync(unpacked) ? unpacked : existsSync(value) ? value : null;
   } catch {
     return null;
   }
 }
 
+function bundledFfmpeg(): string | null {
+  return bundledBinary('ffmpeg-static');
+}
+
 function bundledFfprobe(): string | null {
-  try {
-    const resolved = requireModule('ffprobe-static') as { path?: string } | string | null;
-    const value = typeof resolved === 'string' ? resolved : resolved?.path;
-    if (!value) return null;
-    return value.replace('app.asar', 'app.asar.unpacked');
-  } catch {
-    return null;
-  }
+  return bundledBinary('ffprobe-static');
 }
 
 /** Sibling ffprobe next to a known ffmpeg, which is how most installs ship. */
@@ -86,6 +90,8 @@ export async function detectBinaries(): Promise<BinaryStatus> {
   if (cached) return cached;
 
   const candidates: Array<{ ffmpeg: string; source: BinaryStatus['source'] }> = [];
+  // A path the user set wins; then the binaries shipped with the app, so a
+  // fresh install needs nothing; then whatever the system provides.
   if (configuredPath) candidates.push({ ffmpeg: configuredPath, source: 'configured' });
   const bundled = bundledFfmpeg();
   if (bundled) candidates.push({ ffmpeg: bundled, source: 'bundled' });
@@ -132,7 +138,8 @@ export async function detectBinaries(): Promise<BinaryStatus> {
     version: null,
     source: 'none',
     error:
-      "FFmpeg est introuvable. Installez-le (ffmpeg.org) ou indiquez le chemin du binaire dans les réglages.",
+      "FFmpeg est introuvable. Il est normalement installé automatiquement par « npm install » ; " +
+      'relancez-le, ou indiquez le chemin d’un binaire ffmpeg existant.',
   };
   return cached;
 }

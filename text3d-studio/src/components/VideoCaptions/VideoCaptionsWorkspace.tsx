@@ -31,6 +31,7 @@ import { aspectRatioLabel } from '@/ffmpeg';
 import { formatBytes, formatTimecode } from '@/utils/format';
 import type { FfmpegStatus } from '@/types/desktop';
 import { createLogger } from '@/utils/logger';
+import { humanizeError } from '@/videoproject/errors';
 
 const log = createLogger('video-captions');
 
@@ -145,13 +146,13 @@ async function importVideo(filePath?: string, fileName?: string): Promise<void> 
         useVideoStore.getState().setAudio(wav, peaks);
       } catch (error) {
         log.warn('Extraction audio impossible', error);
-        notify('error', `Audio non extrait : ${(error as Error).message}`);
+        notify('error', `Audio non extrait : ${humanizeError(error)}`);
       }
     } else {
       notify('info', 'Cette vidéo ne contient pas de piste audio : utilisez le mode manuel.');
     }
   } catch (error) {
-    notify('error', `Import impossible : ${(error as Error).message}`);
+    notify('error', `Import impossible : ${humanizeError(error)}`);
   }
 }
 
@@ -172,17 +173,32 @@ function ImportPanel({
         <div className="vc-warning">
           <strong>FFmpeg introuvable</strong>
           <p className="hint">{status.error}</p>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              void window.desktop?.ffmpeg?.pickBinary().then((next) => {
-                if (next) onStatusChange(next);
-              });
-            }}
-          >
-            Indiquer le binaire…
-          </button>
+          <p className="hint">
+            Le plus simple : fermez l’application, relancez <code>npm install</code> dans le
+            dossier du projet (FFmpeg y est téléchargé automatiquement), puis <code>npm run dev</code>.
+          </p>
+          <div className="field-row">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                void window.desktop?.ffmpeg?.status().then(onStatusChange);
+              }}
+            >
+              Revérifier
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                void window.desktop?.ffmpeg?.pickBinary().then((next) => {
+                  if (next) onStatusChange(next);
+                });
+              }}
+            >
+              Indiquer le binaire…
+            </button>
+          </div>
         </div>
       )}
 
@@ -274,8 +290,7 @@ function TranscriptionPanel() {
       useVideoStore.getState().setTranscript(transcript);
       notify('success', `Transcription terminée : ${transcript.words.length} mots`);
     } catch (error) {
-      const message =
-        error instanceof TranscriptionError ? error.message : (error as Error).message;
+      const message = humanizeError(error);
       useVideoStore.getState().setTranscription({ running: false, ratio: null, error: message });
       notify('error', message);
     } finally {
