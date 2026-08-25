@@ -75,8 +75,28 @@ puis binaires fournis, puis PATH système. En dernier recours, le panneau propos
 « Revérifier » et « Indiquer le binaire… », sans redémarrage.
 
 Le modèle de transcription est téléchargé au premier lancement d'une analyse
-(75 à 480 Mo selon le niveau choisi), puis mis en cache : les analyses
-suivantes fonctionnent hors ligne. L'audio ne quitte jamais la machine.
+(75 à 480 Mo selon le niveau choisi), puis mis en cache dans le dossier de
+données de l'application : les analyses suivantes fonctionnent hors ligne.
+L'audio ne quitte jamais la machine. Le panneau *Transcription* affiche le
+dossier utilisé et permet de le vider — un téléchargement interrompu laisse un
+fichier tronqué qui échoue à chaque essai suivant, et seule sa suppression le
+corrige.
+
+### Où tourne la reconnaissance vocale
+
+Dans le **process principal**, avec ONNX Runtime natif — pas dans la fenêtre.
+
+Ce n'est pas un détail d'implémentation : la fenêtre applique une
+Content-Security-Policy stricte qui n'autorise ni `unsafe-eval` ni
+`wasm-unsafe-eval`, donc Chromium refusait de compiler le moindre module
+WebAssembly et **l'analyse échouait avant même d'atteindre le modèle**. Assouplir
+la politique aurait échangé une garantie de sécurité contre un moteur lent : la
+fenêtre n'étant pas *cross-origin isolated*, `SharedArrayBuffer` est absent et la
+version multi-thread ne peut pas utiliser de threads.
+
+En le déplaçant dans le process principal : threads natifs, aucun CSP à
+satisfaire pour le téléchargement, et la fenêtre garde une politique stricte
+sans jamais accéder au réseau. Seuls les échantillons audio transitent par IPC.
 
 **Cet atelier ne fonctionne que dans l'application de bureau** : piloter FFmpeg
 et lire un fichier local depuis le disque est hors de portée d'un navigateur.
@@ -207,6 +227,7 @@ npm run typecheck # TypeScript strict, sans émission
 electron/          Process principal + preload (contextBridge, IPC whitelisté)
                    mediaPath/mediaStream : le protocole appmedia:// qui diffuse
                    un fichier local au lecteur (Range, 206, chemins Windows)
+                   transcriber : Whisper local via ONNX Runtime natif
 scripts/           Script de dev (Vite + Electron) et finalisation du build
 src/
 ├── components/    Interface React
@@ -233,7 +254,7 @@ src/
 │   └── zip.ts         Écriture ZIP « stored » pour la séquence en navigateur
 │
 ├── ffmpeg/        Constructeurs de commandes et lecture ffprobe (purs, testés)
-├── transcription/ Interface moteur, Whisper local, normalisation des timings
+├── transcription/ Interface moteur, pont vers Whisper, normalisation des timings
 ├── captions/      Modèle, segmentation, styles, presets, rendu, SRT/VTT/ASS/JSON
 ├── videoproject/  Store de l'atelier vidéo, pipeline d'export, format projet
 │   └── playback.ts    URL appmedia://, test de décodage, géométrie de l'aperçu

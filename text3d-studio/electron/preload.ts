@@ -73,6 +73,51 @@ const desktop = {
     clearCache: (): Promise<void> => ipcRenderer.invoke('cache:clear'),
   },
 
+  /**
+   * Local speech recognition. Inference runs in the main process with native
+   * ONNX Runtime; the renderer only sends samples and receives words.
+   */
+  asr: {
+    status: (): Promise<{ available: boolean; error?: string; cacheDir?: string }> =>
+      ipcRenderer.invoke('asr:status'),
+
+    run: (payload: {
+      id: string;
+      audio: ArrayBuffer;
+      modelId: string;
+      language: string | null;
+      durationSec: number;
+    }): Promise<
+      | { ok: true; chunks: Array<{ text: string; timestamp: [number, number | null] }>; text: string }
+      | { ok: false; cancelled: boolean; message: string }
+    > => ipcRenderer.invoke('asr:run', payload),
+
+    cancel: (id: string): Promise<boolean> => ipcRenderer.invoke('asr:cancel', id),
+
+    clearModels: (): Promise<void> => ipcRenderer.invoke('asr:clearModels'),
+
+    onProgress: (
+      handler: (payload: {
+        id: string;
+        stage: 'loadingModel' | 'transcribing';
+        ratio: number | null;
+        message: string;
+      }) => void,
+    ): (() => void) => {
+      const listener = (
+        _event: IpcRendererEvent,
+        payload: {
+          id: string;
+          stage: 'loadingModel' | 'transcribing';
+          ratio: number | null;
+          message: string;
+        },
+      ): void => handler(payload);
+      ipcRenderer.on('asr:progress', listener);
+      return () => ipcRenderer.removeListener('asr:progress', listener);
+    },
+  },
+
   ffmpeg: {
     status: (): Promise<FfmpegStatus> => ipcRenderer.invoke('ffmpeg:status'),
     setPath: (value: string | null): Promise<FfmpegStatus> =>

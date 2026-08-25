@@ -12,6 +12,15 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { mediaResponse } from './mediaStream';
 import {
+  cancelTranscription,
+  clearModelCache,
+  defaultCacheDir,
+  setModelCacheDir,
+  transcribe,
+  transcriberStatus,
+  TranscriptionCancelled,
+} from './transcriber';
+import {
   cacheDirFor,
   cancelAllJobs,
   cancelJob,
@@ -327,6 +336,54 @@ function registerIpc(): void {
 
   ipcMain.handle('cache:clear', () => clearCache());
 
+  /* ------------------------------------------------------------ transcription */
+
+  ipcMain.handle('asr:status', () => transcriberStatus());
+
+  ipcMain.handle('asr:clearModels', () => clearModelCache());
+
+  ipcMain.handle(
+    'asr:run',
+    async (
+      event,
+      payload: {
+        id: string;
+        audio: ArrayBuffer;
+        modelId: string;
+        language: string | null;
+        durationSec: number;
+      },
+    ) => {
+      try {
+        const result = await transcribe({
+          id: payload.id,
+          audio: new Float32Array(payload.audio),
+          modelId: payload.modelId,
+          language: payload.language,
+          durationSec: payload.durationSec,
+          onProgress: (progress) => {
+            // The window can be gone by the time a long job reports.
+            if (!event.sender.isDestroyed()) {
+              event.sender.send('asr:progress', { id: payload.id, ...progress });
+            }
+          },
+        });
+        return { ok: true as const, ...result };
+      } catch (error) {
+        if (error instanceof TranscriptionCancelled) {
+          return { ok: false as const, cancelled: true, message: error.message };
+        }
+        return {
+          ok: false as const,
+          cancelled: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('asr:cancel', (_event, id: string) => cancelTranscription(id));
+
   /* ------------------------------------------------------------- render job */
 
   ipcMain.handle(
@@ -365,6 +422,7 @@ function registerMediaProtocol(): void {
 void app.whenReady().then(() => {
   registerMediaProtocol();
   setCacheRoot(path.join(app.getPath('userData'), 'media-cache'));
+  setModelCacheDir(defaultCacheDir(app.getPath('userData')));
   registerIpc();
   buildMenu();
   createWindow();

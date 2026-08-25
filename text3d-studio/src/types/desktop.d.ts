@@ -7,6 +7,17 @@ export interface FfmpegStatus {
   error?: string;
 }
 
+export interface AsrProgress {
+  id: string;
+  stage: 'loadingModel' | 'transcribing';
+  ratio: number | null;
+  message: string;
+}
+
+export type AsrResult =
+  | { ok: true; chunks: Array<{ text: string; timestamp: [number, number | null] }>; text: string }
+  | { ok: false; cancelled: boolean; message: string };
+
 export interface DesktopBridge {
   openProject(): Promise<{ filePath: string; content: string } | null>;
   saveProject(payload: {
@@ -39,6 +50,20 @@ export interface DesktopBridge {
     readFile(filePath: string): Promise<ArrayBuffer>;
     waveform(payload: { wavPath: string; buckets: number }): Promise<number[]>;
     clearCache(): Promise<void>;
+  };
+  /** Local speech recognition, running natively in the main process. */
+  asr?: {
+    status(): Promise<{ available: boolean; error?: string; cacheDir?: string }>;
+    run(payload: {
+      id: string;
+      audio: ArrayBuffer;
+      modelId: string;
+      language: string | null;
+      durationSec: number;
+    }): Promise<AsrResult>;
+    cancel(id: string): Promise<boolean>;
+    clearModels(): Promise<void>;
+    onProgress(handler: (payload: AsrProgress) => void): () => void;
   };
   ffmpeg?: {
     status(): Promise<FfmpegStatus>;

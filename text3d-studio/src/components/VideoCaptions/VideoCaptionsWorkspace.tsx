@@ -358,7 +358,9 @@ function TranscriptionPanel() {
         </button>
       )}
 
-      {job.error && <p className="hint" style={{ color: 'var(--danger)' }}>{job.error}</p>}
+      {job.error && <p className="hint vc-error">{job.error}</p>}
+
+      <ModelCacheInfo />
 
       <details>
         <summary className="hint" style={{ cursor: 'pointer' }}>Mode manuel</summary>
@@ -374,6 +376,57 @@ function TranscriptionPanel() {
         </button>
       </details>
     </Section>
+  );
+}
+
+/**
+ * Where the weights live, and a way to throw them away.
+ *
+ * A download interrupted halfway leaves a truncated file that fails on every
+ * later run, and no amount of retrying fixes it — deleting it does.
+ */
+function ModelCacheInfo() {
+  const [status, setStatus] = useState<{ available: boolean; error?: string; cacheDir?: string } | null>(
+    null,
+  );
+  const [clearing, setClearing] = useState(false);
+  const notify = useStore((state) => state.notify);
+  const asr = window.desktop?.asr;
+
+  useEffect(() => {
+    if (!asr) return;
+    void asr.status().then(setStatus).catch(() => setStatus(null));
+  }, [asr]);
+
+  if (!asr || !status) return null;
+
+  if (!status.available) {
+    return (
+      <p className="hint vc-error">
+        Moteur de reconnaissance vocale indisponible : {status.error ?? 'raison inconnue'}
+      </p>
+    );
+  }
+
+  return (
+    <p className="hint">
+      Modèles installés dans <code>{status.cacheDir ?? '—'}</code>.{' '}
+      <button
+        type="button"
+        className="btn btn-sm"
+        disabled={clearing}
+        onClick={() => {
+          setClearing(true);
+          void asr
+            .clearModels()
+            .then(() => notify('success', 'Modèles supprimés : le prochain essai les retéléchargera.'))
+            .catch((error: unknown) => notify('error', humanizeError(error)))
+            .finally(() => setClearing(false));
+        }}
+      >
+        {clearing ? 'Suppression…' : 'Vider'}
+      </button>
+    </p>
   );
 }
 

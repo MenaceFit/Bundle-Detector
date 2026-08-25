@@ -2,7 +2,7 @@
   "name": "text3d-studio",
   "version": "1.0.0",
   "private": true,
-  "description": "Éditeur local de texte 3D et de typographie animée",
+  "description": "\u00c9diteur local de texte 3D et de typographie anim\u00e9e",
   "main": "dist-electron/main.js",
   "type": "module",
   "engines": {
@@ -66,7 +66,10 @@
     },
     "asarUnpack": [
       "node_modules/ffmpeg-static/**",
-      "node_modules/ffprobe-static/**"
+      "node_modules/ffprobe-static/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
     ]
   },
   "optionalDependencies": {

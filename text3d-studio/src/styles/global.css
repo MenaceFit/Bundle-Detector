@@ -1173,6 +1173,14 @@ select.input {
   pointer-events: none;
 }
 
+.vc-error {
+  color: var(--danger, #ff5c5c);
+  /* Long runtime messages are meant to be read and reported, not truncated. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .vc-empty {
   display: grid;
   place-items: center;
