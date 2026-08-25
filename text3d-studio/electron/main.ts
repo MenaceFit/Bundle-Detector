@@ -4,14 +4,13 @@ import {
   dialog,
   ipcMain,
   Menu,
-  net,
   protocol,
   shell,
   type MenuItemConstructorOptions,
 } from 'electron';
-import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { mediaResponse } from './mediaStream';
 import {
   cacheDirFor,
   cancelAllJobs,
@@ -359,20 +358,8 @@ function registerIpc(): void {
 }
 
 function registerMediaProtocol(): void {
-  protocol.handle(MEDIA_SCHEME, (request) => {
-    try {
-      // appmedia://local/<url-encoded absolute path>
-      const url = new URL(request.url);
-      const filePath = path.resolve(decodeURIComponent(url.pathname));
-      // net.fetch on a file URL honours Range headers, so seeking works.
-      return net.fetch(pathToFileURL(filePath).toString(), {
-        headers: request.headers,
-        method: request.method,
-      });
-    } catch {
-      return new Response('Fichier introuvable', { status: 404 });
-    }
-  });
+  // appmedia://local/<url-encoded absolute path>
+  protocol.handle(MEDIA_SCHEME, (request) => mediaResponse(request));
 }
 
 void app.whenReady().then(() => {

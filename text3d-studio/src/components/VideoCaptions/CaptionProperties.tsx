@@ -4,7 +4,7 @@ import { NumberControl, Segmented, SelectControl, SliderControl, Toggle } from '
 import { ColorSwatch } from '../ColorPicker/ColorField';
 import { useVideoStore } from '@/videoproject/store';
 import { BUILTIN_CAPTION_PRESETS } from '@/captions/presets';
-import type { RevealMode, WordAnimationKind } from '@/captions/types';
+import type { ActiveMotionKind, RevealMode, WordAnimationKind } from '@/captions/types';
 
 const WORD_ANIMATIONS: Array<{ value: WordAnimationKind; label: string }> = [
   { value: 'none', label: 'Aucune' },
@@ -23,6 +23,23 @@ const WORD_ANIMATIONS: Array<{ value: WordAnimationKind; label: string }> = [
   { value: 'shake', label: 'Shake' },
   { value: 'punch', label: 'Punch' },
   { value: 'glow', label: 'Glow' },
+  { value: 'spring', label: 'Spring' },
+  { value: 'impact', label: 'Impact' },
+  { value: 'whip', label: 'Whip' },
+  { value: 'dropIn', label: 'Drop In' },
+  { value: 'zoomBlur', label: 'Zoom Blur' },
+  { value: 'swing', label: 'Swing' },
+  { value: 'riseUp', label: 'Rise Up' },
+  { value: 'flicker', label: 'Flicker' },
+];
+
+/** Motion kept on the word while it is being spoken. */
+const ACTIVE_MOTIONS: Array<{ value: ActiveMotionKind; label: string }> = [
+  { value: 'none', label: 'Aucune' },
+  { value: 'pulse', label: 'Pulsation' },
+  { value: 'breathe', label: 'Respiration' },
+  { value: 'wobble', label: 'Balancement' },
+  { value: 'float', label: 'Flottement' },
 ];
 
 /** Style, animation and segmentation controls for the caption track. */
@@ -268,6 +285,22 @@ export function CaptionProperties() {
             onChange={(color) => patchStyle({ emphasisColor: color })}
           />
         </div>
+        <Field label="Taille des mots importants" value={`× ${style.emphasisScale.toFixed(2)}`}>
+          <SliderControl
+            value={style.emphasisScale}
+            onChange={(emphasisScale) => patchStyle({ emphasisScale })}
+            min={0.8}
+            max={1.8}
+            step={0.01}
+          />
+        </Field>
+        <div className="field-head">
+          <span className="field-label">Mots importants en italique</span>
+          <Toggle
+            value={style.emphasisItalic}
+            onChange={(emphasisItalic) => patchStyle({ emphasisItalic })}
+          />
+        </div>
       </Section>
 
       <Section title="Relief 3D" defaultOpen={false}>
@@ -357,6 +390,59 @@ export function CaptionProperties() {
             max={400}
             step={5}
             decimals={0}
+          />
+        </Field>
+        <Field label="Rotation d’entrée" value={`${Math.round(animation.rotation)}°`}>
+          <SliderControl
+            value={animation.rotation}
+            onChange={(rotation) => patchAnimation({ rotation })}
+            min={-90}
+            max={90}
+            step={1}
+            decimals={0}
+          />
+        </Field>
+        <Field label="Flou de départ" value={`${animation.blurFrom.toFixed(1)} px`}>
+          <SliderControl
+            value={animation.blurFrom}
+            onChange={(blurFrom) => patchAnimation({ blurFrom })}
+            min={0}
+            max={40}
+            step={0.5}
+          />
+        </Field>
+        <Field
+          label="Mouvement du mot dit"
+          hint="Continue tant que le mot est prononcé, après son entrée"
+        >
+          <SelectControl<ActiveMotionKind>
+            value={animation.activeMotion}
+            onChange={(activeMotion) => patchAnimation({ activeMotion })}
+            options={ACTIVE_MOTIONS}
+          />
+        </Field>
+        {animation.activeMotion !== 'none' && (
+          <Field label="Amplitude" value={`× ${animation.activeMotionAmount.toFixed(2)}`}>
+            <SliderControl
+              value={animation.activeMotionAmount}
+              onChange={(activeMotionAmount) => patchAnimation({ activeMotionAmount })}
+              min={0}
+              max={2}
+              step={0.05}
+            />
+          </Field>
+        )}
+        <Field
+          label="Inclinaison des mots"
+          value={`± ${style.wordTilt.toFixed(1)}°`}
+          hint="Chaque mot garde toujours le même angle"
+        >
+          <SliderControl
+            value={style.wordTilt}
+            onChange={(wordTilt) => patchStyle({ wordTilt })}
+            min={0}
+            max={20}
+            step={0.5}
           />
         </Field>
       </Section>

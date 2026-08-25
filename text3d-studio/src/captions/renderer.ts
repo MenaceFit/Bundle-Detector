@@ -8,6 +8,7 @@ import { clamp } from '@/utils/math';
 import { withAlpha } from '@/utils/color';
 import { activeWordIndex, cueAt } from './segmentation';
 import type {
+  ActiveMotionKind,
   CaptionAnimation,
   CaptionCue,
   CaptionStyle,
@@ -56,6 +57,17 @@ interface WordBox {
   centerY: number;
   width: number;
   height: number;
+}
+
+/** A word placed in the frame, with the transform actually applied to it. */
+interface PlacedWord {
+  box: WordBox;
+  state: WordState;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
 }
 
 /** Per-word animation state at a given time. */
@@ -114,8 +126,17 @@ export function captionTypography(style: CaptionStyle, height: number, width: nu
  * word granularity: each word is measured with the exact same font, greedily
  * packed into lines within `maxWidth`, then centred. Positions therefore stay
  * bound to `cue.words` no matter how the line wraps.
+ *
+ * `scaleOf` reports the size multiplier a word will be drawn at — the active
+ * word grows, an emphasised one grows — and the packing reserves that much
+ * room. Without it a word blown up to 1.24× simply overlapped its neighbours,
+ * because the line had been measured as if every word were the same size.
  */
-export function measureWords(cue: CaptionCue, typography: Typography): {
+export function measureWords(
+  cue: CaptionCue,
+  typography: Typography,
+  scaleOf: (index: number) => number = () => 1,
+): {
   layout: { width: number; height: number; ascent: number; descent: number };
   boxes: WordBox[];
 } {
@@ -138,7 +159,10 @@ export function measureWords(cue: CaptionCue, typography: Typography): {
     // Letter spacing sits between glyphs, so a word of n chars carries n-1 gaps.
     const width =
       ctx.measureText(text).width + Math.max(0, chars.length - 1) * typography.letterSpacing;
-    return { word, index, text, width };
+    // `width` is the glyph width; `advance` is the room the word occupies once
+    // its own scale is taken into account.
+    const scale = Math.max(0.01, scaleOf(index));
+    return { word, index, text, width, advance: width * scale };
   });
 
   ctx.restore();
@@ -153,11 +177,11 @@ export function measureWords(cue: CaptionCue, typography: Typography): {
 
   for (const entry of measured) {
     const extra = current.entries.length === 0 ? 0 : spaceWidth;
-    if (current.entries.length > 0 && current.width + extra + entry.width > limit) {
+    if (current.entries.length > 0 && current.width + extra + entry.advance > limit) {
       lines.push(current);
       current = { entries: [], width: 0 };
     }
-    current.width += (current.entries.length === 0 ? 0 : spaceWidth) + entry.width;
+    current.width += (current.entries.length === 0 ? 0 : spaceWidth) + entry.advance;
     current.entries.push(entry);
   }
   if (current.entries.length > 0) lines.push(current);
@@ -175,12 +199,14 @@ export function measureWords(cue: CaptionCue, typography: Typography): {
       boxes.push({
         word: entry.word,
         index: entry.index,
-        centerX: cursor + entry.width / 2,
+        // Centred inside the room reserved for it, so growing a word pushes its
+        // neighbours apart instead of running into them.
+        centerX: cursor + entry.advance / 2,
         centerY: baseline - ascent + (ascent + descent) / 2,
         width: entry.width,
         height: ascent + descent,
       });
-      cursor += entry.width + spaceWidth;
+      cursor += entry.advance + spaceWidth;
     }
   });
 
@@ -271,11 +297,134 @@ export function wordState(
       state.opacity = p;
       uniform(state, animation.scaleFrom + (1 - animation.scaleFrom) * p);
       break;
+    case 'spring': {
+      // A settling oscillation rather than a single overshoot: the word passes
+      // its final size twice before resting, which reads as weight.
+      state.opacity = Math.min(1, p * 4);
+      const swing = Math.cos(p * Math.PI * 2.6) * remaining ** 2;
+      uniform(state, 1 - (1 - animation.scaleFrom) * swing);
+      break;
+    }
+    case 'impact': {
+      // Lands from oversize, with a shudder that dies out immediately.
+      state.opacity = Math.min(1, p * 5);
+      const settle = applyEasing('easeOut', p);
+      const overshoot = 1 + (1 / Math.max(0.05, animation.scaleFrom) - 1) * (1 - settle);
+      uniform(state, overshoot);
+      state.offsetX = Math.sin(p * Math.PI * 8) * animation.distance * 0.08 * remaining ** 2;
+      state.offsetY = Math.sin(p * Math.PI * 5) * animation.distance * 0.05 * remaining ** 2;
+      break;
+    }
+    case 'whip': {
+      // Arrives sideways, rotating back to level — the snap of a hard cut.
+      state.opacity = Math.min(1, p * 3);
+      const eased = applyEasing('easeOut', p);
+      state.offsetX = (1 - eased) * animation.distance;
+      state.rotation = (1 - eased) * animation.rotation;
+      uniform(state, animation.scaleFrom + (1 - animation.scaleFrom) * eased);
+      break;
+    }
+    case 'dropIn': {
+      // Falls in, then squashes and recovers where it lands.
+      state.opacity = Math.min(1, p * 4);
+      const fall = applyEasing('easeIn', Math.min(1, p / 0.55));
+      state.offsetY = -(1 - fall) * animation.distance;
+      const squash = p <= 0.55 ? 0 : Math.sin(((p - 0.55) / 0.45) * Math.PI) * 0.22;
+      state.scaleY = Math.max(0.05, 1 - squash);
+      state.scaleX = 1 + squash * 0.6;
+      break;
+    }
+    case 'zoomBlur': {
+      // Rushes in from far away, focus catching up with it.
+      state.opacity = Math.min(1, p * 2);
+      const eased = applyEasing('easeOut', p);
+      uniform(state, 1 + (1 - eased) * 1.6);
+      state.blur = (1 - eased) * animation.blurFrom;
+      break;
+    }
+    case 'swing': {
+      // Pendulum, hinged above the word.
+      state.opacity = Math.min(1, p * 3);
+      state.rotation = Math.sin(p * Math.PI * 2.2) * animation.rotation * remaining;
+      uniform(state, animation.scaleFrom + (1 - animation.scaleFrom) * applyEasing('easeOut', p));
+      break;
+    }
+    case 'riseUp': {
+      // Rises and grows at once, the calmest of the energetic entrances.
+      const eased = applyEasing('easeOut', p);
+      state.opacity = Math.min(1, p * 2);
+      state.offsetY = (1 - eased) * animation.distance * 0.6;
+      uniform(state, animation.scaleFrom + (1 - animation.scaleFrom) * eased);
+      break;
+    }
+    case 'flicker': {
+      // Two hard blinks before it settles, like a tube striking.
+      const blink = p < 0.18 ? 1 : p < 0.3 ? 0.15 : p < 0.42 ? 1 : p < 0.5 ? 0.35 : 1;
+      state.opacity = blink * Math.min(1, p * 6);
+      uniform(state, animation.scaleFrom + (1 - animation.scaleFrom) * applyEasing('easeOut', p));
+      break;
+    }
     default:
       state.opacity = p;
   }
 
   return state;
+}
+
+/**
+ * Continuous motion of the word being spoken, applied on top of its entrance.
+ *
+ * `elapsed` is the time since the word started, so the phase is bound to the
+ * audio rather than to the wall clock: scrubbing the timeline to the same
+ * instant always produces the same frame, which is what lets the preview and
+ * the exported file agree. Returns a *multiplier* and offsets to combine with
+ * the entrance state, never a replacement for it.
+ */
+export function activeMotion(
+  kind: ActiveMotionKind,
+  elapsed: number,
+  amount: number,
+): { scale: number; offsetY: number; rotation: number } {
+  const idle = { scale: 1, offsetY: 0, rotation: 0 };
+  if (kind === 'none' || amount <= 0 || !Number.isFinite(elapsed)) return idle;
+  const t = Math.max(0, elapsed);
+
+  switch (kind) {
+    case 'pulse':
+      // A quick heartbeat that fades as the word is held.
+      return {
+        ...idle,
+        scale: 1 + Math.sin(t * Math.PI * 4) * 0.06 * amount * Math.exp(-t * 1.6),
+      };
+    case 'breathe':
+      return { ...idle, scale: 1 + Math.sin(t * Math.PI * 1.6) * 0.045 * amount };
+    case 'wobble':
+      return { ...idle, rotation: Math.sin(t * Math.PI * 3) * 2.6 * amount };
+    case 'float':
+      return { ...idle, offsetY: Math.sin(t * Math.PI * 1.8) * 7 * amount };
+    default:
+      return idle;
+  }
+}
+
+/**
+ * Deterministic per-word tilt, in degrees.
+ *
+ * Hashed from the word's own identity so it never changes between frames or
+ * between the preview and the export — a tilt re-rolled every frame would make
+ * the caption vibrate instead of lean.
+ */
+export function wordTilt(word: WordTimestamp, maxDegrees: number): number {
+  if (maxDegrees === 0) return 0;
+  const key = `${word.id}:${word.text}`;
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  // 0..1 from the top bits, mapped to -max..+max.
+  const unit = ((hash >>> 8) & 0xffff) / 0xffff;
+  return (unit * 2 - 1) * maxDegrees;
 }
 
 /** Words of a cue that should be on screen at `time`, given the reveal mode. */
@@ -304,7 +453,7 @@ export function visibleWordIndices(
  */
 export function buildCaptionProject(options: CaptionFrameOptions): {
   project: Project;
-  boxes: Array<{ box: WordBox; state: WordState; x: number; y: number }>;
+  boxes: Array<PlacedWord>;
 } | null {
   const { track, style, animation, width, height, time } = options;
   const cue = cueAt(track, time);
@@ -324,7 +473,18 @@ export function buildCaptionProject(options: CaptionFrameOptions): {
       ? { ...cue, words: visibleIndices.map((index) => cue.words[index]!) }
       : cue;
 
-  const { layout, boxes } = measureWords(laidOut, typography);
+  // The layout has to know how big each word will end up, or a word scaled up
+  // for emphasis would overrun the one next to it.
+  const laidOutActive = style.reveal === 'wordByWord' ? visibleIndices.indexOf(active) : active;
+  const drawnScale = (index: number): number => {
+    const word = laidOut.words[index];
+    let scale = 1;
+    if (index === laidOutActive && style.activeWord.enabled) scale *= style.activeWord.scale;
+    if (word?.emphasis) scale *= style.emphasisScale;
+    return scale;
+  };
+
+  const { layout, boxes } = measureWords(laidOut, typography, drawnScale);
   if (boxes.length === 0) return null;
 
   // Box indices are positions within `laidOut`; map them back to the cue.
@@ -348,7 +508,7 @@ export function buildCaptionProject(options: CaptionFrameOptions): {
   project.canvas.height = height;
   project.layers = [];
 
-  const placed: Array<{ box: WordBox; state: WordState; x: number; y: number }> = [];
+  const placed: PlacedWord[] = [];
 
   boxes.forEach((box) => {
     if (!visible.has(box.index)) return;
@@ -369,39 +529,63 @@ export function buildCaptionProject(options: CaptionFrameOptions): {
       animation.wordDuration <= 0 ? 1 : clamp(elapsed / animation.wordDuration, 0, 1);
     const state = wordState(animation.word, progress, animation);
 
+    const emphasised = box.word.emphasis === true;
+
     const layer = createTextLayer({ name: box.word.text });
     layer.text = box.word.text;
-    layer.typography = { ...typography, maxWidth: null, align: 'center' };
+    layer.typography = {
+      ...typography,
+      maxWidth: null,
+      align: 'center',
+      // Mixing an italic into a highlighted word is how hand-made captions
+      // separate a keyword from the line it sits in.
+      fontStyle: emphasised && style.emphasisItalic ? 'italic' : 'normal',
+    };
     layer.style = cloneLayerStyle(style, {
       active: isActive && style.activeWord.enabled,
-      emphasis: box.word.emphasis === true,
+      emphasis: emphasised,
     });
 
     let emphasis = 1;
     if (isActive && style.activeWord.enabled) emphasis *= style.activeWord.scale;
-    if (box.word.emphasis) emphasis *= style.emphasisScale;
+    if (emphasised) emphasis *= style.emphasisScale;
+
+    // The live word keeps moving after its entrance settles; the others stay put.
+    const motion = isActive
+      ? activeMotion(animation.activeMotion, time - box.word.start, animation.activeMotionAmount)
+      : { scale: 1, offsetY: 0, rotation: 0 };
 
     let opacity = state.opacity;
     if (style.reveal === 'karaoke' && isFuture) opacity *= style.upcomingOpacity;
 
     const x = blockCenterX + (box.centerX - layout.width / 2) + state.offsetX;
-    const y = blockCenterY + (box.centerY - layout.height / 2) + state.offsetY;
+    const y =
+      blockCenterY + (box.centerY - layout.height / 2) + state.offsetY + motion.offsetY;
 
     layer.transform = {
       ...layer.transform,
       // renderProject positions a layer relative to the canvas centre.
       x: x - width / 2,
       y: y - height / 2,
-      scaleX: state.scaleX * emphasis,
-      scaleY: state.scaleY * emphasis,
-      rotation: state.rotation,
+      scaleX: state.scaleX * emphasis * motion.scale,
+      scaleY: state.scaleY * emphasis * motion.scale,
+      rotation: state.rotation + motion.rotation + wordTilt(box.word, style.wordTilt),
       anchorX: 0.5,
       anchorY: 0.5,
     };
     layer.opacity = clamp(opacity, 0, 1);
 
     project.layers.push(layer);
-    placed.push({ box, state, x, y });
+    placed.push({
+      box,
+      state,
+      x,
+      y,
+      // The effective scale, so the highlight box tracks the word exactly.
+      scaleX: layer.transform.scaleX,
+      scaleY: layer.transform.scaleY,
+      rotation: layer.transform.rotation,
+    });
   });
 
   if (project.layers.length === 0) return null;
@@ -470,12 +654,15 @@ export function renderCaptionFrame(
     for (const placed of built.boxes) {
       if (placed.box.word.id !== cue?.words[active]?.id) continue;
       const pad = style.activeWord.boxPadding;
-      const w = placed.box.width * placed.state.scaleX * style.activeWord.scale + pad * 2;
-      const h = placed.box.height * placed.state.scaleY * style.activeWord.scale + pad * 1.2;
+      const w = placed.box.width * placed.scaleX + pad * 2;
+      const h = placed.box.height * placed.scaleY + pad * 1.2;
       ctx.save();
       ctx.globalAlpha = clamp(style.activeWord.boxOpacity * placed.state.opacity, 0, 1);
       ctx.fillStyle = withAlpha(style.activeWord.boxColor, 1);
-      roundedRect(ctx, placed.x - w / 2, placed.y - h / 2, w, h, style.activeWord.boxRadius);
+      // The box leans with the word it belongs to, tilt and wobble included.
+      ctx.translate(placed.x, placed.y);
+      ctx.rotate((placed.rotation * Math.PI) / 180);
+      roundedRect(ctx, -w / 2, -h / 2, w, h, style.activeWord.boxRadius);
       ctx.fill();
       ctx.restore();
     }

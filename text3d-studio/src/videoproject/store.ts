@@ -50,6 +50,27 @@ export interface OutputSettings {
   quality: 'social' | 'high' | 'maximum' | 'small';
 }
 
+/**
+ * What the preview player is currently able to show.
+ *
+ * `source` distinguishes the original file from the cached H.264 proxy built
+ * for sources the browser engine cannot decode; `status` drives the banner over
+ * the stage so a conversion is never a silent wait.
+ */
+export interface PreviewState {
+  path: string | null;
+  source: 'original' | 'proxy';
+  status: 'idle' | 'preparing' | 'ready' | 'error';
+  message: string;
+}
+
+const PREVIEW_IDLE: PreviewState = {
+  path: null,
+  source: 'original',
+  status: 'idle',
+  message: '',
+};
+
 export interface VideoCaptionsState {
   step: CaptionStep;
   metadata: VideoMetadata | null;
@@ -74,6 +95,7 @@ export interface VideoCaptionsState {
   time: number;
   playing: boolean;
   selectedWordId: string | null;
+  preview: PreviewState;
 
   transcription: JobState;
   exportJob: JobState;
@@ -107,6 +129,7 @@ export interface VideoCaptionsState {
   setTime: (time: number) => void;
   setPlaying: (playing: boolean) => void;
   selectWord: (wordId: string | null) => void;
+  setPreview: (patch: Partial<PreviewState>) => void;
 
   setTranscription: (patch: Partial<JobState>) => void;
   reportTranscription: (progress: TranscriptionProgress) => void;
@@ -169,6 +192,7 @@ export const useVideoStore = create<VideoCaptionsState>((set, get) => ({
   time: 0,
   playing: false,
   selectedWordId: null,
+  preview: { ...PREVIEW_IDLE },
 
   transcription: { ...IDLE },
   exportJob: { ...IDLE },
@@ -183,6 +207,8 @@ export const useVideoStore = create<VideoCaptionsState>((set, get) => ({
       waveform: [],
       time: 0,
       playing: false,
+      // The new file has to be checked for playability before it can be shown.
+      preview: { ...PREVIEW_IDLE },
       step: 'transcript',
       // A vertical source keeps its own frame; a landscape one defaults to 9:16.
       output: {
@@ -203,6 +229,7 @@ export const useVideoStore = create<VideoCaptionsState>((set, get) => ({
       track: { cues: [] },
       time: 0,
       playing: false,
+      preview: { ...PREVIEW_IDLE },
       step: 'import',
       selectedWordId: null,
       transcription: { ...IDLE },
@@ -210,6 +237,8 @@ export const useVideoStore = create<VideoCaptionsState>((set, get) => ({
     }),
 
   setAudio: (path, waveform) => set({ audioPath: path, waveform }),
+
+  setPreview: (patch) => set((state) => ({ preview: { ...state.preview, ...patch } })),
 
   setTranscript: (transcript) =>
     set((state) => ({
@@ -396,6 +425,8 @@ export const useVideoStore = create<VideoCaptionsState>((set, get) => ({
       step: snapshot.transcript ? 'style' : 'import',
       time: 0,
       playing: false,
+      // A reopened project re-checks the source: the machine may differ.
+      preview: { ...PREVIEW_IDLE },
     }),
 }));
 

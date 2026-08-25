@@ -104,7 +104,27 @@ export type WordAnimationKind =
   | 'elastic'
   | 'shake'
   | 'punch'
-  | 'glow';
+  | 'glow'
+  // High-energy entrances, for the word-by-word styles.
+  | 'spring'
+  | 'impact'
+  | 'whip'
+  | 'dropIn'
+  | 'zoomBlur'
+  | 'swing'
+  | 'riseUp'
+  | 'flicker';
+
+/**
+ * Continuous motion applied to the word currently being spoken, *after* its
+ * entrance has finished.
+ *
+ * Without it a caption is only ever animated for the fraction of a second a
+ * word appears, and then freezes — which is exactly what makes static captions
+ * look flat next to the dynamic ones. This keeps the live word breathing for as
+ * long as it is being said, without touching its timing.
+ */
+export type ActiveMotionKind = 'none' | 'pulse' | 'breathe' | 'wobble' | 'float';
 
 /** How the words of a cue are revealed relative to the audio. */
 export type RevealMode =
@@ -151,6 +171,14 @@ export interface CaptionStyle {
   upcomingOpacity: number;
   emphasisColor: string;
   emphasisScale: number;
+  /** Emphasised words are also italicised, the way hand-made captions do it. */
+  emphasisItalic: boolean;
+  /**
+   * Maximum random tilt per word, in degrees. Derived from the word itself, so
+   * a given word always leans the same way — a caption that re-rolled its angles
+   * every frame would vibrate.
+   */
+  wordTilt: number;
 }
 
 export interface CaptionAnimation {
@@ -167,6 +195,10 @@ export interface CaptionAnimation {
   blurFrom: number;
   /** Entrance/exit of the whole cue block. */
   cueFade: number;
+  /** Continuous motion of the word being spoken, once it has finished entering. */
+  activeMotion: ActiveMotionKind;
+  /** Amplitude of `activeMotion`, 0 disables it. */
+  activeMotionAmount: number;
 }
 
 export interface CaptionPreset {

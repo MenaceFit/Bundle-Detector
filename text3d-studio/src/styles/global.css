@@ -1094,15 +1094,68 @@ select.input {
   overflow: hidden;
 }
 
+/*
+ * The stage is measured in JavaScript and receives explicit pixel dimensions.
+ * Deriving them here from the video's intrinsic size collapsed the whole stage
+ * to nothing while the file was loading — and to nothing at all when it never
+ * loaded.
+ */
+.vc-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .vc-stage {
   position: relative;
-  margin: 16px auto;
-  max-height: calc(100% - 32px);
-  max-width: calc(100% - 32px);
   background: #000;
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+.vc-stage-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(8, 10, 14, 0.82);
+  color: var(--text-1, #e8ecf2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.vc-stage-status.is-error {
+  background: rgba(38, 12, 12, 0.86);
+}
+
+.vc-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  animation: vc-spin 0.9s linear infinite;
+}
+
+@keyframes vc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vc-spinner {
+    animation-duration: 3s;
+  }
 }
 
 .vc-stage video {

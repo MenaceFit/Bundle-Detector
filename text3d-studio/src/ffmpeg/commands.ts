@@ -55,6 +55,49 @@ export function extractAudioArgs(inputPath: string, outputPath: string): string[
   ];
 }
 
+/** Longest edge of the preview proxy, in pixels. */
+export const PREVIEW_PROXY_MAX_EDGE = 960;
+
+/**
+ * Transcodes a source the browser engine cannot decode into a proxy it can.
+ *
+ * Used only for the on-screen preview: the export always reads the original
+ * file, so nothing here affects the delivered quality. It is therefore tuned
+ * for speed — a reduced resolution, the fastest usable x264 preset, and a
+ * generous CRF — and the result is cached beside the other derivations of the
+ * file. The source is opened read-only, like every other command here.
+ */
+export function previewProxyArgs(
+  inputPath: string,
+  outputPath: string,
+  maxEdge = PREVIEW_PROXY_MAX_EDGE,
+): string[] {
+  return [
+    '-y',
+    '-i', inputPath,
+    '-map', '0:v:0',
+    // Audio is optional: a silent clip must still get a preview.
+    '-map', '0:a:0?',
+    // `min(iw, …)` keeps a source that is already small at its own size:
+    // `force_original_aspect_ratio` alone would enlarge it, which costs time
+    // and gains nothing. The commas are escaped for ffmpeg's filter parser.
+    '-vf',
+    `scale=w=min(iw\\,${maxEdge}):h=min(ih\\,${maxEdge}):` +
+      'force_original_aspect_ratio=decrease:force_divisible_by=2',
+    '-c:v', 'libx264',
+    '-profile:v', 'high',
+    '-pix_fmt', 'yuv420p',
+    '-preset', 'veryfast',
+    '-crf', '26',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ac', '2',
+    // Puts the index at the head of the file so playback can start immediately.
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+}
+
 /** Single frame at `timeSec`, used for the import thumbnail. */
 export function thumbnailArgs(
   inputPath: string,

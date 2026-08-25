@@ -15,6 +15,7 @@ import {
   extractAudioArgs,
   normalizeDimensions,
   parseProgressTime,
+  previewProxyArgs,
   probeArgs,
   QUALITY_PRESETS,
   renderArgs,
@@ -276,5 +277,41 @@ describe('normalizeDimensions', () => {
 
   it('never returns a degenerate size', () => {
     expect(normalizeDimensions(0, 1)).toEqual({ width: 2, height: 2 });
+  });
+});
+
+describe('previewProxyArgs', () => {
+  it('re-encodes to what a browser engine can actually decode', () => {
+    const args = previewProxyArgs('/in.mov', '/out.mp4');
+    expect(args).toContain('libx264');
+    expect(args).toContain('yuv420p');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+    expect(args[args.length - 1]).toBe('/out.mp4');
+  });
+
+  it('never enlarges a source that is already small', () => {
+    const filter = previewProxyArgs('/in.mp4', '/out.mp4', 720)[
+      previewProxyArgs('/in.mp4', '/out.mp4', 720).indexOf('-vf') + 1
+    ];
+    expect(filter).toContain('min(iw');
+    expect(filter).toContain('720');
+    // Odd dimensions would be rejected by yuv420p.
+    expect(filter).toContain('force_divisible_by=2');
+  });
+
+  it('tolerates a source without audio', () => {
+    // The trailing "?" is what keeps a silent clip from failing the mapping.
+    expect(previewProxyArgs('/in.mp4', '/out.mp4')).toContain('0:a:0?');
+  });
+
+  it('puts the index first so playback can start before the file is read', () => {
+    const args = previewProxyArgs('/in.mp4', '/out.mp4');
+    expect(args[args.indexOf('-movflags') + 1]).toBe('+faststart');
+  });
+
+  it('reads the source and writes only the given output', () => {
+    const args = previewProxyArgs('/in.mp4', '/out.mp4');
+    expect(args.indexOf('/in.mp4')).toBe(args.indexOf('-i') + 1);
+    expect(args.filter((arg) => arg === '/in.mp4')).toHaveLength(1);
   });
 });

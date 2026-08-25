@@ -91,8 +91,9 @@ et lire un fichier local depuis le disque est hors de portée d'un navigateur.
 3. **Relire** : les mots de faible confiance sont listés en premier. Double-clic
    pour corriger un mot, réglage des timestamps au centième, découpe et fusion
    des sous-titres.
-4. **Styler** : 13 presets, du classique au « viral ». Le mot prononcé peut
-   changer de couleur, grossir, recevoir un fond arrondi ou un halo.
+4. **Styler** : 21 presets, du classique au « mot par mot » très rythmé. Le mot
+   prononcé peut changer de couleur, grossir, recevoir un fond arrondi, un halo,
+   et continuer de bouger tant qu'il est prononcé.
 5. **Exporter** : MP4 avec sous-titres incrustés, et/ou SRT, VTT, ASS, JSON.
 
 ### Synchronisation
@@ -107,6 +108,40 @@ C'est le critère prioritaire du moteur, avant tout effet visuel :
   texte ne peuvent pas dériver ;
 - l'entrée animée d'un mot est calée sur l'instant où il est prononcé :
   l'animation décore un timing, elle ne le déplace jamais.
+
+### L'aperçu
+
+Le lecteur de l'aperçu est le moteur du navigateur embarqué, qui décode beaucoup
+moins de formats que FFmpeg : un HEVC (iPhone), un ProRes ou un MKV s'exportent
+parfaitement mais ne s'affichent pas. Le format est donc vérifié à l'import, et
+si le lecteur ne sait pas l'ouvrir, une **copie d'aperçu H.264 est convertie une
+fois** et mise en cache à côté des autres fichiers dérivés. La vidéo d'origine
+n'est ni déplacée ni modifiée, et l'export continue de lire l'original — la copie
+ne sert qu'à l'affichage.
+
+Le cas est plus vicieux qu'un simple message d'erreur : sur un HEVC, l'élément
+vidéo annonce une durée et son temps avance normalement, mais aucune image n'est
+jamais décodée et aucune erreur n'est émise. L'aperçu surveille donc la présence
+d'une image, pas seulement l'absence d'erreur.
+
+### Sous-titres mot par mot
+
+Huit presets sont conçus pour la vidéo verticale courte : un ou deux mots très
+grands, une entrée franche à chaque syllabe, et un mouvement qui **continue
+pendant que le mot est prononcé** au lieu de se figer dès qu'il est apparu
+(*Hyper Mot*, *Punch Line*, *Duo Empilé*, *Chaos*, *Projecteur*, *Mots-clés*,
+*Cinéma*, *Flash Néon*).
+
+Les réglages correspondants sont dans le panneau *Animation des mots* :
+vingt-quatre entrées (*Impact*, *Spring*, *Whip*, *Drop In*, *Zoom Blur*,
+*Swing*, *Rise Up*, *Flicker*…), un mouvement continu du mot prononcé
+(pulsation, respiration, balancement, flottement) avec son amplitude, et une
+inclinaison aléatoire par mot — dérivée du mot lui-même, donc toujours la même,
+sinon le sous-titre vibrerait au lieu de pencher.
+
+La mise en page réserve à chaque mot la place qu'il occupera **une fois
+agrandi** : un mot mis en avant à 1,24× écarte ses voisins au lieu de leur
+rentrer dedans.
 
 ### Découpage automatique
 
@@ -170,6 +205,8 @@ npm run typecheck # TypeScript strict, sans émission
 
 ```text
 electron/          Process principal + preload (contextBridge, IPC whitelisté)
+                   mediaPath/mediaStream : le protocole appmedia:// qui diffuse
+                   un fichier local au lecteur (Range, 206, chemins Windows)
 scripts/           Script de dev (Vite + Electron) et finalisation du build
 src/
 ├── components/    Interface React
@@ -199,6 +236,7 @@ src/
 ├── transcription/ Interface moteur, Whisper local, normalisation des timings
 ├── captions/      Modèle, segmentation, styles, presets, rendu, SRT/VTT/ASS/JSON
 ├── videoproject/  Store de l'atelier vidéo, pipeline d'export, format projet
+│   └── playback.ts    URL appmedia://, test de décodage, géométrie de l'aperçu
 │
 ├── state/         Store Zustand : document unique + historique undo/redo
 ├── project/       Schéma, defaults, sérialisation, presets, randomize

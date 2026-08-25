@@ -106,6 +106,8 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   upcomingOpacity: 1,
   emphasisColor: '#FFE500',
   emphasisScale: 1.1,
+  emphasisItalic: false,
+  wordTilt: 0,
 };
 
 export const DEFAULT_CAPTION_ANIMATION: CaptionAnimation = {
@@ -118,6 +120,8 @@ export const DEFAULT_CAPTION_ANIMATION: CaptionAnimation = {
   scaleFrom: 0.72,
   blurFrom: 8,
   cueFade: 0.08,
+  activeMotion: 'none',
+  activeMotionAmount: 1,
 };
 
 /** Overrides merge into the defaults, so a preset only states what it changes. */
@@ -182,6 +186,217 @@ export const BUILTIN_CAPTION_PRESETS: CaptionPreset[] = [
     activeWord: { enabled: true, color: '#FFE500', scale: 1.0 },
   }, { word: 'none', wordStagger: 0, cueFade: 0.1 }),
 
+  /* ------------------------------------------------------------------------
+   * The word-by-word family.
+   *
+   * These are the styles built for short vertical video: one or two very large
+   * words at a time, a hard entrance on every syllable, and — through
+   * `activeMotion` — motion that continues for as long as the word is being
+   * spoken instead of freezing the instant it has appeared.
+   * ---------------------------------------------------------------------- */
+
+  preset(
+    'hyperWord',
+    'Hyper Mot',
+    'viral',
+    'Un seul mot, énorme, qui claque à chaque syllabe',
+    {
+      reveal: 'wordByWord',
+      visibleWords: 1,
+      fontSizeRatio: 0.115,
+      position: 'center',
+      lineHeight: 1.05,
+      maxWidthRatio: 0.9,
+      activeWord: { enabled: true, color: '#FFE500', scale: 1 },
+      emphasisColor: '#FFE500',
+      emphasisScale: 1,
+      layer: {
+        stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 16 },
+        shadow: { ...DEFAULT_CAPTION_STYLE.layer.shadow, y: 10, blur: 26, opacity: 0.6 },
+      },
+    },
+    {
+      word: 'impact',
+      wordDuration: 0.16,
+      wordStagger: 0,
+      scaleFrom: 0.62,
+      distance: 40,
+      activeMotion: 'pulse',
+      activeMotionAmount: 1,
+    },
+  ),
+
+  preset(
+    'punchLine',
+    'Punch Line',
+    'viral',
+    'Trois mots blancs, celui qui parle passe en jaune et grossit',
+    {
+      reveal: 'karaoke',
+      visibleWords: 3,
+      fontSizeRatio: 0.086,
+      maxWidthRatio: 0.78,
+      lineHeight: 1.14,
+      upcomingOpacity: 1,
+      activeWord: { enabled: true, color: '#FFE500', scale: 1.22 },
+      layer: { stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 13 } },
+    },
+    {
+      word: 'spring',
+      wordDuration: 0.26,
+      wordStagger: 0.05,
+      scaleFrom: 0.7,
+      activeMotion: 'breathe',
+      activeMotionAmount: 0.8,
+    },
+  ),
+
+  preset(
+    'stackDuo',
+    'Duo Empilé',
+    'viral',
+    'Deux mots superposés qui tombent l’un après l’autre',
+    {
+      reveal: 'wordByWord',
+      visibleWords: 2,
+      fontSizeRatio: 0.098,
+      // A narrow block forces the pair to stack instead of sitting side by side.
+      maxWidthRatio: 0.42,
+      lineHeight: 1.2,
+      position: 'center',
+      activeWord: { enabled: true, color: '#FFE500', scale: 1.06 },
+      layer: { stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 14 } },
+    },
+    {
+      word: 'dropIn',
+      wordDuration: 0.3,
+      wordStagger: 0,
+      distance: 90,
+      activeMotion: 'none',
+    },
+  ),
+
+  preset(
+    'chaos',
+    'Chaos',
+    'viral',
+    'Mots inclinés au hasard, arrivée fouettée',
+    {
+      reveal: 'wordByWord',
+      visibleWords: 2,
+      fontSizeRatio: 0.092,
+      maxWidthRatio: 0.6,
+      // Each word keeps its own lean: derived from the word, never re-rolled.
+      wordTilt: 7,
+      activeWord: { enabled: true, color: '#FF4D6D', scale: 1.1 },
+      layer: { stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 13 } },
+    },
+    {
+      word: 'whip',
+      wordDuration: 0.2,
+      wordStagger: 0.03,
+      distance: 130,
+      rotation: 22,
+      scaleFrom: 0.7,
+      activeMotion: 'wobble',
+      activeMotionAmount: 0.7,
+    },
+  ),
+
+  preset(
+    'spotlight',
+    'Projecteur',
+    'karaoke',
+    'La phrase reste en retrait, seul le mot dit est éclairé',
+    {
+      reveal: 'karaoke',
+      fontSizeRatio: 0.07,
+      upcomingOpacity: 0.32,
+      activeWord: { enabled: true, color: '#FFFFFF', scale: 1.16, glow: true },
+      layer: {
+        glow: { enabled: false, color: '#FFFFFF', intensity: 1.2, blur: 30, opacity: 0.6 },
+        stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 8 },
+      },
+    },
+    {
+      word: 'riseUp',
+      wordDuration: 0.28,
+      wordStagger: 0.04,
+      distance: 40,
+      scaleFrom: 0.85,
+      activeMotion: 'float',
+      activeMotionAmount: 0.6,
+    },
+  ),
+
+  preset(
+    'keywords',
+    'Mots-clés',
+    'viral',
+    'Phrase entière, les mots importants en jaune et en italique',
+    {
+      reveal: 'all',
+      fontSizeRatio: 0.062,
+      uppercase: false,
+      maxWidthRatio: 0.8,
+      activeWord: { enabled: false },
+      emphasisColor: '#FFE500',
+      emphasisScale: 1.06,
+      // Reproduces the mixed-weight look of hand-made captions.
+      emphasisItalic: true,
+      layer: { stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 8 } },
+    },
+    { word: 'riseUp', wordDuration: 0.24, wordStagger: 0.045, distance: 26, scaleFrom: 0.9 },
+  ),
+
+  preset(
+    'cinema',
+    'Cinéma',
+    'basic',
+    'Discret, arrivée en fondu net depuis le flou',
+    {
+      reveal: 'all',
+      fontFamily: 'Arial',
+      fontWeight: 700,
+      fontSizeRatio: 0.045,
+      uppercase: false,
+      maxWidthRatio: 0.72,
+      letterSpacing: 0.5,
+      activeWord: { enabled: false },
+      layer: {
+        stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 3, opacity: 0.7 },
+        shadow: { ...DEFAULT_CAPTION_STYLE.layer.shadow, y: 3, blur: 14, opacity: 0.65 },
+      },
+    },
+    { word: 'zoomBlur', wordDuration: 0.34, wordStagger: 0.02, blurFrom: 10 },
+  ),
+
+  preset(
+    'flash',
+    'Flash Néon',
+    'music',
+    'Un mot qui s’allume comme un néon',
+    {
+      reveal: 'wordByWord',
+      visibleWords: 1,
+      fontSizeRatio: 0.1,
+      position: 'center',
+      activeWord: { enabled: true, color: '#39FFEA', scale: 1, glow: true },
+      layer: {
+        stroke: { ...DEFAULT_CAPTION_STYLE.layer.stroke, width: 7, color: '#06121A' },
+        glow: { enabled: true, color: '#39FFEA', intensity: 1.5, blur: 36, opacity: 0.8 },
+      },
+    },
+    {
+      word: 'flicker',
+      wordDuration: 0.3,
+      wordStagger: 0,
+      scaleFrom: 0.88,
+      activeMotion: 'pulse',
+      activeMotionAmount: 0.7,
+    },
+  ),
+
   preset('viralPop', 'Viral Pop', 'viral', 'Mot par mot, entrée en pop élastique', {
     reveal: 'wordByWord',
     visibleWords: 1,
@@ -194,8 +409,10 @@ export const BUILTIN_CAPTION_PRESETS: CaptionPreset[] = [
     reveal: 'karaoke',
     visibleWords: 3,
     fontSizeRatio: 0.075,
-    activeWord: { enabled: true, color: '#00E5FF', scale: 1.24 },
-  }, { word: 'punch', wordDuration: 0.16, wordStagger: 0.04 }),
+    activeWord: { enabled: true, color: '#00E5FF', scale: 1.18 },
+    // `spring` settles around its final size instead of overshooting past it,
+    // so a word this large never collides with the one before it.
+  }, { word: 'spring', wordDuration: 0.22, wordStagger: 0.04 }),
 
   preset('highlightBox', 'Box', 'viral', 'Le mot actif reçoit un fond arrondi', {
     reveal: 'karaoke',

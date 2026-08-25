@@ -8,6 +8,7 @@ import {
   normalizeDimensions,
   parseProbeOutput,
   parseProgressTime,
+  previewProxyArgs,
   probeArgs,
   renderArgs,
   thumbnailArgs,
@@ -65,6 +66,21 @@ export async function extractAudio(metadata: VideoMetadata): Promise<string> {
     sourcePath: metadata.path,
     outputName: 'audio-16k-mono.wav',
     buildArgs: extractAudioArgs(metadata.path, OUTPUT_PLACEHOLDER),
+    placeholder: OUTPUT_PLACEHOLDER,
+  });
+  return path;
+}
+
+/**
+ * Builds (or reuses) the H.264 proxy used when the source cannot be played
+ * natively. Returns the path of a file inside the per-video cache directory —
+ * the original is never touched.
+ */
+export async function buildPreviewProxy(metadata: VideoMetadata): Promise<string> {
+  const { path } = await bridge().video.derive({
+    sourcePath: metadata.path,
+    outputName: 'preview-proxy.mp4',
+    buildArgs: previewProxyArgs(metadata.path, OUTPUT_PLACEHOLDER),
     placeholder: OUTPUT_PLACEHOLDER,
   });
   return path;
